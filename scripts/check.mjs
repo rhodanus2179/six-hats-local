@@ -34,7 +34,7 @@ Object.assign(context, {
   aiCandidateForValidation:(id,x)=>x, buildContext:()=>({}), buildPrompt:()=>"", conclusionSchemaContext:x=>x, structuredAttempt:async()=>{}, demoResult:()=>({}),
   renderResult:()=>"", renderCard:()=>"", bindCardActions:()=>{}, runHat:async()=>({ok:true}), startFreshWorkflow:async()=>{}, markDependentsStale:()=>{},
   migrateState:x=>x, migrateStoredMeetings:()=>{}, runTestAssertions:()=>({assertions:[],summary:{}}), continueAfterWarning:async()=>{},
-  arr:v=>Array.isArray(v)?v:[], unique:v=>[...new Set(v.filter(Boolean))], safeText:(v,m=700)=>String(v??"").slice(0,m),
+  arr:v=>Array.isArray(v)?v:[], clone:v=>structuredClone(v), unique:v=>[...new Set(v.filter(Boolean))], safeText:(v,m=700)=>String(v??"").slice(0,m),
   normalizeText:v=>String(v??"").normalize("NFKC").replace(/[\s。、，,.・:：;；!?！？「」『』（）()\-—_]/g,"").toLowerCase(),
   stringsIn:function stringsIn(v,out=[]){if(typeof v==="string")out.push(v);else if(Array.isArray(v))v.forEach(x=>stringsIn(x,out));else if(v&&typeof v==="object")Object.values(v).forEach(x=>stringsIn(x,out));return out;},
   now:()=>"2026-08-02T00:00:00.000Z", sha256Short:async()=>"hash", debugLog:()=>{}, createWarning:(code,severity,message,hatId)=>({code,severity,message,hatId}),
