@@ -72,6 +72,7 @@ context.state.results={
   white:{missingInformation:[{text:"処理能力",priority:"high"}]},
 };
 context.state.results.green.ideas[3].pilotMethod="企業との契約を締結する";
+context.state.results.green.ideas[3].requirements=["契約締結","設備購入"];
 context.initializeCandidateSelection(true);
 if (context.deriveInitialDisposition(context.state.results.green.ideas[1]) !== "exclude") throw new Error("Violating idea was not excluded");
 for (const variant of ["normal","compact"]) {
