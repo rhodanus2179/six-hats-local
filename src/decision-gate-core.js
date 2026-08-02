@@ -95,13 +95,17 @@
     if(raw&&!isIrreversibleActionText(raw))return raw;
     return `「${safeText(idea?.name,100)}」の実施可能性、費用、受入条件をヒアリングまたは小規模試験で確認する`;
   }
-  function requirementCheckText(text){return `「${safeText(text,150)}」の条件・担当・費用を事前確認する`;}
+  function requirementCheckText(text,idea){
+    const raw=safeText(text,150);
+    if(isIrreversibleActionText(raw))return `「${safeText(idea?.name,100)}」の実施条件、費用、責任分担を正式手続き前に確認する`;
+    return `「${raw}」の条件・担当・費用を事前確認する`;
+  }
   function makeActions(pairs,missing,compact){
     const limit=compact?4:6,out=[],seen=new Set();
     const add=x=>{if(out.length>=limit)return false;const key=`${x.ideaId||"GLOBAL"}|${normalizeText(x.text)}`;if(!normalizeText(x.text)||seen.has(key))return false;seen.add(key);out.push(x);return true;};
     const groups=pairs.map(({idea})=>{
       const base=idea.ideaId.replace(/[^A-Z0-9]/gi,""),items=[{actionId:`ACT-${base}-PILOT`,ideaId:idea.ideaId,type:"pilot",text:reversiblePilotText(idea)}];
-      arr(idea.requirements).slice(0,2).forEach((text,i)=>items.push({actionId:`ACT-${base}-REQ-${i+1}`,ideaId:idea.ideaId,type:"requirement_check",text:requirementCheckText(text)}));
+      arr(idea.requirements).slice(0,2).forEach((text,i)=>items.push({actionId:`ACT-${base}-REQ-${i+1}`,ideaId:idea.ideaId,type:"requirement_check",text:requirementCheckText(text,idea)}));
       return items;
     });
     for(const group of groups)add(group[0]);
