@@ -6,7 +6,7 @@ function compactResult(id,r){
   if(id==="red")return {stakeholders:arr(r.stakeholders).slice(0,10).map(x=>({stakeholderId:x.stakeholderId,reaction:safeText(x.intuitiveReaction,100),concern:safeText(x.mainConcern||x.negativeFeeling||x.communicationConcern,100)})),consensusConcerns:arr(r.consensusConcerns).slice(0,4)};
   if(id==="black")return {summary:safeText(r.summary,200),topRisks:[...arr(r.risks)].sort((a,b)=>(b.likelihood*b.impact)-(a.likelihood*a.impact)).slice(0,4).map(x=>({name:x.name,cause:safeText(x.cause,120),likelihood:x.likelihood,impact:x.impact,mitigations:arr(x.mitigations).slice(0,2)})),fatalConditions:arr(r.fatalConditions).slice(0,3)};
   if(id==="yellow")return {summary:safeText(r.summary,200),benefits:arr(r.benefits).slice(0,4).map(x=>({name:x.name,description:safeText(x.description,120),conditions:arr(x.conditions).slice(0,2),indicators:arr(x.indicators).slice(0,2),evidenceLevel:x.evidenceLevel}))};
-  if(id==="green")return {ideas:arr(r.ideas).slice(0,4).map(x=>({ideaId:x.ideaId,name:x.name,category:x.category,description:safeText(x.description,140),benefits:arr(x.benefits).slice(0,2),challenges:arr(x.challenges).slice(0,2)})),combinationIdeas:arr(r.combinationIdeas).slice(0,2)};
+  if(id==="green")return {ideas:conclusionEligibleIdeas(r.ideas).slice(0,4).map(x=>({ideaId:x.ideaId,name:x.name,category:x.category,description:safeText(x.description,140),benefits:arr(x.benefits).slice(0,2),challenges:arr(x.challenges).slice(0,2)})),combinationIdeas:arr(r.combinationIdeas).slice(0,2)};
   return null;
 }
 function buildContext(id,minimal=false){
@@ -16,14 +16,20 @@ function buildContext(id,minimal=false){
   if(id==="black"){c.input={topic:input.topic,constraints:input.constraints,focus:input.focus};c.blueOpening=compactResult("blue_opening",state.results.blue_opening);c.white=compactResult("white",state.results.white);}
   if(id==="yellow"){c.input={topic:input.topic,focus:input.focus};c.blueOpening=compactResult("blue_opening",state.results.blue_opening);c.white=compactResult("white",state.results.white);}
   if(id==="green"){c.input={topic:input.topic,constraints:state.deterministic.constraints,decisionBoundary:state.decisionBoundary};c.black=compactResult("black",state.results.black);c.yellow=compactResult("yellow",state.results.yellow);}
-  if(id==="blue_closing"){c.input={topic:input.topic,desiredOutcome:input.desiredOutcome,focus:input.focus,constraints:state.deterministic.constraints,decisionBoundary:state.decisionBoundary};for(const hid of HAT_IDS.slice(0,6))if(!state.meta.excluded.includes(hid)&&state.results[hid])c[hid]=compactResult(hid,state.results[hid]);c.importantHats=state.meta.important.filter(x=>!state.meta.excluded.includes(x));}
+  if(id==="blue_closing"){
+    c.input={topic:input.topic,desiredOutcome:input.desiredOutcome,focus:input.focus,constraints:state.deterministic.constraints,decisionBoundary:state.decisionBoundary};
+    for(const hid of HAT_IDS.slice(0,6))if(!state.meta.excluded.includes(hid)&&state.results[hid])c[hid]=compactResult(hid,state.results[hid]);
+    c.excludedGreenIdeas=excludedIdeasForPrompt(state.results.green?.ideas);
+    c.importantHats=state.meta.important.filter(x=>!state.meta.excluded.includes(x));
+  }
   return c;
 }
 function buildPrompt(id,{deep=false,regenerate=false,compact=false}={},attempt=1,errors=[]){
   const depth=compact?"必須情報だけを短く回答してください。":state.input.detail==="brief"?"回答は簡潔にしてください。":state.input.detail==="detailed"?"必要な条件分岐を含めて詳しくしてください。ただしSchemaの件数・文字数上限を守ってください。":"過不足のない標準的な詳しさで回答してください。";
   const retry=attempt>1?`\n前回の出力は要件を満たしませんでした。次だけを修正してください: ${errors.slice(0,4).map(x=>safeText(x,120)).join(" / ")}`:"";
   const compactNote=compact?"\n出力を短縮して再試行しています。重複を避け、指定件数と文字数以内で回答してください。":"";
-  return `役割:\n${ROLE_PROMPTS[id]}\n\n回答方針:\n${depth}${deep?"\n通常より一段深く、見落としを追加してください。":""}${regenerate?"\n前回とは異なる切り口も検討してください。":""}${compactNote}${retry}\n\n入力情報:\n${JSON.stringify(buildContext(id,attempt>1||compact))}`;
+  const conclusionRule=id==="blue_closing"?"\n入力のexcludedGreenIdeasは比較案、推奨案、推奨ラベル、推奨理由、要約、成功条件、次の行動に含めないでください。recommendation.labelはrecommendation.optionIdが参照する比較案のlabelと一致させてください。":"";
+  return `役割:\n${ROLE_PROMPTS[id]}\n\n回答方針:\n${depth}${deep?"\n通常より一段深く、見落としを追加してください。":""}${regenerate?"\n前回とは異なる切り口も検討してください。":""}${compactNote}${conclusionRule}${retry}\n\n入力情報:\n${JSON.stringify(buildContext(id,attempt>1||compact))}`;
 }
 
 function setHatPhase(id,phase){state.meta.phase=phase;const m=state.resultMeta[id]||freshResultMeta();m.phase=phase;state.resultMeta[id]=m;debugLog("hat-phase-change",{hatId:id,phase});renderAll();}
@@ -66,7 +72,7 @@ function classifyQuotaError(error){const msg=String(error?.message||"").toLowerC
 function isRetryable(error,attempt){if(attempt>=2)return false;if(["AbortError","NotSupportedError","ReferenceError","TypeError"].includes(error?.name))return false;return ["QuotaExceededError","SchemaValidationError","SemanticValidationError","SyntaxError"].includes(error?.name)||/json/i.test(error?.message||"");}
 
 async function structuredAttempt(id,variant,attempt,opt,previousErrors){
-  const session=await createHatSession(abortController.signal);activeHatSession=session;const schema=schemaFor(id,variant,state);const compact=variant==="compact";
+  const session=await createHatSession(abortController.signal);activeHatSession=session;const schemaContext=id==="blue_closing"?conclusionSchemaContext(state):state;const schema=schemaFor(id,variant,schemaContext);const compact=variant==="compact";
   try{
     setHatPhase(id,"measuring_context");const prompt=buildPrompt(id,{...opt,compact},attempt,previousErrors);let measured=null;
     if(session?.measureContextUsage){try{measured=await session.measureContextUsage(prompt,{responseConstraint:schema});}catch(e){debugLog("context-measure-error",{hatId:id,error:errorData(e)});}}
