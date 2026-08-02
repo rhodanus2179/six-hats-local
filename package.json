@@ -1,6 +1,6 @@
 {
   "name": "six-hats-local",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "private": true,
   "description": "Local six thinking hats harness for Chrome Built-in AI",
   "scripts": {
