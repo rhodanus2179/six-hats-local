@@ -4,11 +4,11 @@
   const S=window.Schema4Lite,L=S.legacy;
   function invalidateBlue(reason){if(state.results.blue_closing){if(!state.meta.stale.includes("blue_closing"))state.meta.stale.push("blue_closing");state.resultMeta.blue_closing.status="stale";}debugLog("final-blue-invalidated",{reason});}
 
-  markDependentsStale=function(id,onlyExisting=true){L.markDependentsStale(id,onlyExisting);if(id==="green"){S.initializeCandidateSelection(true);state.candidateSelection.state="pending";invalidateBlue("green-changed");}};
+  markDependentsStale=function(id,onlyExisting=true){L.markDependentsStale(id,onlyExisting);if(id==="green"){state.candidateSelection=S.freshSelection();invalidateBlue("green-changed");}};
   runHat=async function(id,opt={}){
     if(id==="blue_closing"){const v=S.validateCandidateSelection();if(state.candidateSelection?.state!=="confirmed"||!v.valid){showGlobalNotice(v.errors[0]||"緑の結論候補を確定してください。","error");renderAll();return {ok:false,continue:false};}}
     const result=await L.runHat(id,opt);
-    if(id==="green"&&result.ok){S.initializeCandidateSelection(true);const auto=state.candidateSelection.items.length<=3&&state.candidateSelection.items.every(x=>x.disposition==="include");if(state.input.mode==="quick"&&auto){state.candidateSelection.state="confirmed";state.candidateSelection.confirmedAt=now();}else{state.candidateSelection.state="pending";result.continue=false;}await queueAutosave("candidate-selection-initialized");renderAll();}
+    if(id==="green"&&result.ok){S.initializeCandidateSelection(false);const auto=state.candidateSelection.items.length<=3&&state.candidateSelection.items.every(x=>x.disposition==="include");if(state.input.mode==="quick"&&auto){state.candidateSelection.state="confirmed";state.candidateSelection.confirmedAt=now();}else{state.candidateSelection.state="pending";result.continue=false;}await queueAutosave("candidate-selection-initialized");renderAll();}
     return result;
   };
   startFreshWorkflow=async function(){state.candidateSelection=S.freshSelection();return L.startFreshWorkflow();};
