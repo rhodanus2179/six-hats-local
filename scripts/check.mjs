@@ -19,10 +19,22 @@ const config = await readFile("src/config.js", "utf8");
 for (const marker of ['appVersion: "1.3.0"', "schemaVersion: 4", "promptVersion: 3", "validatorVersion: 3", 'sixHatsMeetingsV4', "combinationSuggestion", "selectedIdeaId", "selectedActionIds"]) {
   if (!config.includes(marker)) throw new Error(`Schema 4 config marker missing: ${marker}`);
 }
+const baseAi = await readFile("src/ai.js", "utf8");
+for (const marker of ["GREEN_GENERATION_TIMEOUT_MS=6*60*1000", "GenerationTimeoutError", "generation-timeout", "failedAttemptMeta", "measuredContextUsage"]) {
+  if (!baseAi.includes(marker)) throw new Error(`Timeout/attempt marker missing: ${marker}`);
+}
 const ai = await readFile("src/decision-gate-ai.js", "utf8");
-for (const marker of ["buildFinalBlueArtifacts", "candidateCount", "contextRatio", "selectedActionIds"]) if (!ai.includes(marker)) throw new Error(`AI adapter marker missing: ${marker}`);
+for (const marker of ["buildFinalBlueArtifacts", "candidateCount", "contextRatio", "selectedActionIds", "constraintConcerns", "outOfScopeConcerns", "normalizeGreenCandidate"]) {
+  if (!ai.includes(marker)) throw new Error(`AI adapter marker missing: ${marker}`);
+}
 const ui = await readFile("src/decision-gate-ui.js", "utf8");
-for (const marker of ["最終青の比較候補", "候補を確定して最終青へ", "Schema 4の会議データだけ"]) if (!ui.includes(marker)) throw new Error(`UI marker missing: ${marker}`);
+for (const marker of ["最終青の比較候補", "候補を確定して最終青へ", "Schema 4の会議データだけ", "state.candidateSelection=S.freshSelection()", "S.initializeCandidateSelection(false)"]) {
+  if (!ui.includes(marker)) throw new Error(`UI marker missing: ${marker}`);
+}
+const workflow = await readFile("src/workflow.js", "utf8");
+for (const marker of ["lastFailedGeneration", "structuredAttempted:attempts.length>0", "measuredContextUsage"]) {
+  if (!workflow.includes(marker)) throw new Error(`Failure logging marker missing: ${marker}`);
+}
 
 const context = createContext({console, structuredClone, Date, Math, JSON, Set, Map, window: null});
 context.window = context;
@@ -41,21 +53,27 @@ Object.assign(context, {
   state:{build:{},input:{topic:"test"},decisionBoundary:{criteria:[{id:"D-001",text:"実現性"}]},results:{},resultMeta:{green:{updatedAt:"v1"}},candidateSelection:null},
 });
 new Script(await readFile("src/decision-gate-core.js", "utf8"), {filename:"src/decision-gate-core.js"}).runInContext(context);
-const idea=(id,name,status)=>({ideaId:id,name,description:`${name}の説明`,benefits:["便益"],challenges:["課題"],requirements:["条件確認"],pilotMethod:`${name}を試行する`,constraintAssessments:[{constraintId:"C-002",status}],outOfScopeAssessments:[]});
+const idea=(id,name,status)=>({ideaId:id,name,description:`${name}の説明`,benefits:["便益"],challenges:["課題"],requirements:["条件確認","体制整備"],pilotMethod:`${name}を試行する`,constraintAssessments:[{constraintId:"C-002",status}],outOfScopeAssessments:[]});
 context.state.results={
-  green:{ideas:[idea("G-001","段階導入","satisfies"),idea("G-002","住民インセンティブ制度","violates"),idea("G-003","資源化企業との連携","satisfies")]},
+  green:{ideas:[idea("G-001","段階導入","satisfies"),idea("G-002","住民インセンティブ制度","violates"),idea("G-003","資源化企業との連携","satisfies"),idea("G-004","自動選別","satisfies")]},
   black:{risks:[{name:"処理能力不足",cause:"余力不足",likelihood:3,impact:5,mitigations:["住民インセンティブ"]}]},
   yellow:{benefits:[{name:"資源化",description:"資源化率向上"}],strategicOpportunities:["景品を付与"]},
   white:{missingInformation:[{text:"処理能力",priority:"high"}]},
 };
 context.initializeCandidateSelection(true);
 if (context.deriveInitialDisposition(context.state.results.green.ideas[1]) !== "exclude") throw new Error("Violating idea was not excluded");
+for (const variant of ["normal","compact"]) {
+  const artifacts = context.buildFinalBlueArtifacts(context.state,variant);
+  if (artifacts.candidates.some(x=>x.ideaId==="G-002")) throw new Error(`Excluded candidate leaked into ${variant} final-blue context`);
+  for (const candidate of artifacts.candidates) {
+    if (!artifacts.actionCandidates.some(action=>action.ideaId===candidate.ideaId)) throw new Error(`${variant} has no action for ${candidate.ideaId}`);
+  }
+  const serialized=JSON.stringify(artifacts);
+  for (const term of ["住民インセンティブ","景品"]) if (serialized.includes(term)) throw new Error(`Excluded/unsafe upstream text leaked into ${variant}: ${term}`);
+  if (serialized.includes("mitigations") || serialized.includes("strategicOpportunities")) throw new Error(`Unapproved upstream fields leaked into ${variant}`);
+}
 const artifacts = context.buildFinalBlueArtifacts(context.state,"normal");
-if (artifacts.candidates.some(x=>x.ideaId==="G-002")) throw new Error("Excluded candidate leaked into final-blue context");
-const serialized=JSON.stringify(artifacts);
-for (const term of ["住民インセンティブ","景品"]) if (serialized.includes(term)) throw new Error(`Excluded/unsafe upstream text leaked: ${term}`);
-if (serialized.includes("mitigations") || serialized.includes("strategicOpportunities")) throw new Error("Unapproved upstream fields leaked");
-const selected="G-003", selectedAction=artifacts.actionCandidates.find(x=>x.ideaId===selected);
+const selected="G-004", selectedAction=artifacts.actionCandidates.find(x=>x.ideaId===selected);
 const model={decisionType:"pilot",selectedIdeaId:selected,ideaEvaluations:artifacts.candidates.map(x=>({ideaId:x.ideaId,feasibility:4,recommendationScore:4,mainReason:"実現可能",mainRisk:"調整必要"})),keyReasons:["制約と整合","小規模試行可能"],selectedActionIds:[selectedAction.actionId]};
 if (context.Schema4Lite.validateFinalBlue(model,context.state).errors.length) throw new Error("Valid Schema 4 result failed validation");
 const assembled=context.Schema4Lite.assembleFinalDecision(model,context.state);
