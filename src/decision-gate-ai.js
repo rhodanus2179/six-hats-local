@@ -33,7 +33,7 @@
   };
 
   demoResult=function(id,variant="normal"){
-    if(id==="green"){const old=L.demoResult(id,variant);return {...old,combinationSuggestion:arr(old.combinationIdeas)[0]||"",combinationIdeas:undefined};}
+    if(id==="green"){const old=L.demoResult(id,variant),{combinationIdeas,...rest}=old;return {...rest,combinationSuggestion:arr(combinationIdeas)[0]||""};}
     if(id!=="blue_closing")return L.demoResult(id,variant);
     if(!state.candidateSelection?.items?.length)S.initializeCandidateSelection(true);let v=S.validateCandidateSelection();if(!v.valid){state.candidateSelection.items.forEach((x,i)=>x.disposition=i<3?"include":"exclude");state.candidateSelection.sourceGreenUpdatedAt=state.resultMeta.green?.updatedAt;}
     state.candidateSelection.state="confirmed";state.candidateSelection.confirmedAt=now();const a=S.buildFinalBlueArtifacts(state,variant),selected=a.candidates[0],actions=a.actionCandidates.filter(x=>x.ideaId===selected.ideaId||x.ideaId==null).slice(0,variant==="compact"?2:3);
