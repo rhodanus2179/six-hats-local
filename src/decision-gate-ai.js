@@ -1,9 +1,9 @@
 /* Schema 4 Lite AI adapter: send only confirmed candidates and receive IDs plus short evaluations. */
 (function installSchema4AI(){
   "use strict";
-  const S=window.Schema4Lite,L=S.legacy,legacySchemaFor=schemaFor;
+  const S=window.Schema4Lite,L=S.legacy,legacySchemaFor=schemaFor,legacyCallAI=callAI;
 
-  ROLE_PROMPTS.green="緑の帽子として、二択を崩し、性質の異なる代替案を提示してください。指定された案IDを使用してください。制約は違反または不明のIDだけをconstraintConcernsへ、対象外事項は抵触・抵触可能性・不明のIDだけをoutOfScopeConcernsへ入れてください。問題のないIDは配列へ入れないでください。評価理由の文章は不要です。組合せ提案は表示用の発想メモ1件だけとし、説明は重複を避けて簡潔にしてください。";
+  ROLE_PROMPTS.green="緑の帽子として、二択を崩し、性質の異なる代替案を提示してください。指定された案IDを使用してください。制約は違反または不明のIDだけをconstraintConcernsへ、対象外事項は抵触・抵触可能性・不明のIDだけをoutOfScopeConcernsへ入れてください。問題がないと明示確認できないIDは、無理に満たすと判定せず配列へ入れないでください。評価理由の文章は不要です。pilotMethodには契約、発注、設備購入、本格導入、全面導入ではなく、ヒアリング、机上確認、試験搬入、小規模実証など中止・見直し可能な検証行動を書いてください。組合せ提案は表示用の発想メモ1件だけとし、説明は重複を避けて簡潔にしてください。";
 
   function schemaForGreenConcerns(variant,ctx=state){
     const ideaCount=variant==="compact"?3:4,cIds=arr(ctx.deterministic?.constraints).map(x=>x.id).slice(0,4),oIds=arr(ctx.decisionBoundary?.outOfScope).map(x=>x.id).slice(0,4);
@@ -27,13 +27,19 @@
       if(arr(idea.constraintAssessments).length||arr(idea.outOfScopeAssessments).length)return idea;
       const cMap=new Map(arr(idea.constraintConcerns).map(x=>[x.constraintId,x.status])),oMap=new Map(arr(idea.outOfScopeConcerns).map(x=>[x.outOfScopeId,x.status]));
       const {constraintConcerns,outOfScopeConcerns,...rest}=idea;
-      return {...rest,constraintAssessments:cIds.map(id=>({constraintId:id,status:cMap.get(id)||"satisfies",note:""})),outOfScopeAssessments:oIds.map(id=>({outOfScopeId:id,status:oMap.get(id)||"not_related",note:""}))};
+      return {...rest,
+        constraintAssessments:cIds.map(id=>cMap.has(id)?{constraintId:id,status:cMap.get(id),note:""}:{constraintId:id,status:"unknown",note:"no_concern_reported"}),
+        outOfScopeAssessments:oIds.map(id=>oMap.has(id)?{outOfScopeId:id,status:oMap.get(id),note:""}:{outOfScopeId:id,status:"unknown",note:"no_concern_reported"})
+      };
     })};
   }
   function greenCandidateForSchema(candidate){
     return {...candidate,ideas:arr(candidate?.ideas).map(idea=>{
       const {constraintAssessments,outOfScopeAssessments,...rest}=idea;
-      return {...rest,constraintConcerns:arr(constraintAssessments).filter(x=>["violates","unknown"].includes(x.status)).map(x=>({constraintId:x.constraintId,status:x.status})),outOfScopeConcerns:arr(outOfScopeAssessments).filter(x=>["possibly_conflicts","conflicts","unknown"].includes(x.status)).map(x=>({outOfScopeId:x.outOfScopeId,status:x.status}))};
+      return {...rest,
+        constraintConcerns:arr(constraintAssessments).filter(x=>x.note!=="no_concern_reported"&&["violates","unknown"].includes(x.status)).map(x=>({constraintId:x.constraintId,status:x.status})),
+        outOfScopeConcerns:arr(outOfScopeAssessments).filter(x=>x.note!=="no_concern_reported"&&["possibly_conflicts","conflicts","unknown"].includes(x.status)).map(x=>({outOfScopeId:x.outOfScopeId,status:x.status}))
+      };
     })};
   }
 
@@ -46,12 +52,37 @@
   };
 
   semanticValidate=function(id,data,ctx=state,variant="normal"){
-    if(id==="green")return L.semanticValidate(id,normalizeGreenCandidate(data,ctx),ctx,variant);
+    if(id==="green"){
+      const normalized=normalizeGreenCandidate(data,ctx),result=L.semanticValidate(id,normalized,ctx,variant);
+      for(const idea of arr(normalized.ideas))if(S.isIrreversibleActionText(idea.pilotMethod))result.warnings.push(createWarning("GREEN_PILOT_NOT_REVERSIBLE","review_required",`${idea.name}: pilotMethodが契約・本格導入など不可逆な行動です。最終青では検証行動へ置き換えます`,id,[idea.ideaId]));
+      result.semanticChecks=[...(result.semanticChecks||[]),`緑の標準案数: ${variant==="compact"?3:4}`,"未申告の制約・対象外評価は適合ではなく未確認として保存"];
+      return result;
+    }
     if(id!=="blue_closing")return L.semanticValidate(id,data,ctx,variant);
     const v=S.validateFinalBlue(data,ctx);return {errors:v.errors,warnings:v.warnings,placeholderHits:[],semanticChecks:[`Schema 4候補整合性: ${v.errors.length?"エラー":"通過"}`,`警告件数: ${v.warnings.length}`]};
   };
   transformCandidate=function(id,candidate,variant){if(id==="green")return normalizeGreenCandidate(candidate,state);return id==="blue_closing"?S.assembleFinalDecision(candidate,state,variant):L.transformCandidate(id,candidate,variant);};
   aiCandidateForValidation=function(id,full){if(id==="green")return greenCandidateForSchema(full);return id==="blue_closing"?(full?.modelResult||full):L.aiCandidateForValidation(id,full);};
+
+  callAI=async function(id,opt={}){
+    if(id!=="green")return legacyCallAI(id,opt);
+    const attempts=[];let previousErrors=[],variant=opt.deep?"normal":"compact";
+    debugLog("green-schema-selection",{initialVariant:variant,reason:opt.deep?"deep-request":"compact-default"});
+    for(let attempt=1;attempt<=2;attempt++){
+      try{
+        const result=await structuredAttempt(id,variant,attempt,opt,previousErrors);attempts.push(result.attemptMeta);return {...result,attempts};
+      }catch(e){
+        const details=e.details||[e.message];debugLog("structured-generation-error",{hatId:id,attempt,schemaVariant:variant,error:errorData(e),details});
+        attempts.push(e.attemptMeta||{attempt,attemptId:currentAttemptId,startedAt:null,completedAt:now(),durationMs:0,promptLength:0,responseLength:0,measuredContextUsage:null,contextUsageBefore:null,contextWindow:null,schemaVariant:variant,error:errorData(e)});
+        if(!isRetryable(e,attempt)){e.attempts=attempts;throw e;}
+        previousErrors=details;variant="compact";
+        debugLog("structured-generation-retry",{hatId:id,nextAttempt:attempt+1,reason:errorData(e),schemaVariant:variant});
+        if(state.runSummary)state.runSummary.retryCount++;
+        setHatPhase(id,"retrying_compact");
+      }
+    }
+    const error=new Error("緑の帽子の再試行に失敗しました");error.attempts=attempts;throw error;
+  };
 
   structuredAttempt=async function(id,variant,attempt,opt,previousErrors){
     if(id!=="blue_closing")return L.structuredAttempt(id,variant,attempt,opt,previousErrors);
