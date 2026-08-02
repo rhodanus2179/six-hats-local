@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>6色思考会議 — Gemini Nano</title>
+    <link rel="stylesheet" href="./styles/app.css" />
+  </head>
+  <body>
+    <div class="app" id="app">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brandMark" aria-hidden="true"></span
+          ><span>6色思考会議</span>
+        </div>
+        <div class="meetingTitle" id="meetingTitle">新しい会議</div>
+        <div class="toolbar">
+          <button class="btn" id="newBtn">
+            ＋ <span class="label">新規</span>
+          </button>
+          <button class="btn" id="saveBtn">保存</button>
+          <button class="btn" id="historyBtn">履歴</button>
+          <button class="btn" id="exportBtn">出力</button>
+          <button class="btn" id="themeBtn" title="テーマ切替">◐</button>
+        </div>
+      </header>
+      <div class="layout">
+        <aside class="sidebar" id="sidebar"></aside>
+        <main class="main">
+          <section class="panel hero" id="inputPanel">
+            <h1>ひとつの議題を、6つの視点で。</h1>
+            <p>
+              Gemini
+              Nanoが、事実・感情・リスク・可能性・創造性を混ぜずに検討し、最後に青い帽子が統合します。入力内容と生成結果はブラウザ内で処理・保存されます。
+            </p>
+            <div class="field">
+              <label for="topic">議題 <span aria-label="必須">*</span></label
+              ><textarea
+                id="topic"
+                placeholder="例：自治体は製品プラスチックの分別収集を開始すべきか"
+              ></textarea>
+            </div>
+            <div class="field">
+              <label for="context">背景・前提</label
+              ><textarea
+                id="context"
+                placeholder="現状、経緯、既知の事実など"
+              ></textarea>
+            </div>
+            <div class="grid2">
+              <div class="field">
+                <label for="constraints">制約条件</label
+                ><textarea
+                  id="constraints"
+                  placeholder="予算、期限、制度、設備など"
+                ></textarea>
+              </div>
+              <div class="field">
+                <label for="stakeholders">主な関係者</label
+                ><textarea
+                  id="stakeholders"
+                  placeholder="住民、経営層、現場担当者など（改行または読点区切り）"
+                ></textarea>
+              </div>
+            </div>
+            <div class="grid2">
+              <div class="field">
+                <label for="desiredOutcome">期待する成果</label
+                ><select id="desiredOutcome">
+                  <option>推奨判断</option>
+                  <option>論点整理</option>
+                  <option>代替案の発見</option>
+                  <option>会議準備</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="focus">重視する観点</label
+                ><input
+                  class="input"
+                  id="focus"
+                  placeholder="コスト、実現性、安全性、合意形成など"
+                />
+              </div>
+            </div>
+            <div class="grid2">
+              <div class="field">
+                <label for="detail">回答の詳しさ</label
+                ><select id="detail">
+                  <option value="brief">簡潔</option>
+                  <option value="standard" selected>標準</option>
+                  <option value="detailed">詳細</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="mode">実行モード</label
+                ><select id="mode">
+                  <option value="quick">クイック（連続実行）</option>
+                  <option value="standard" selected>
+                    標準（各段階を確認）
+                  </option>
+                </select>
+              </div>
+            </div>
+            <div class="actions">
+              <button class="btn primary" id="startBtn">会議を開始</button>
+              <button class="btn" id="sampleBtn">サンプルを読み込む</button>
+              <button class="btn" id="clearBtn">入力をクリア</button>
+              <span class="statusPill" id="aiPill"
+                ><i></i><span>AI確認中</span></span
+              >
+            </div>
+            <div class="progressWrap" id="progressWrap">
+              <div class="progressTrack">
+                <div class="progressBar" id="progressBar"></div>
+              </div>
+              <div class="progressText" id="progressText"></div>
+            </div>
+            <div class="notice warn hidden" id="aiNotice"></div>
+          </section>
+          <div id="cards"></div>
+          <div class="footer">
+            ローカルAIの回答は意思決定の参考情報です。重要な事実・数値・法的要件は別途確認してください。
+          </div>
+        </main>
+      </div>
+    </div>
+    <dialog id="editDialog">
+      <div class="dialogHead">
+        <h2 id="editTitle">編集</h2>
+        <button class="btn small" data-close="editDialog">閉じる</button>
+      </div>
+      <div class="dialogBody">
+        <p class="notice">JSONを編集してください。保存時に形式を検証します。</p>
+        <textarea
+          id="editJson"
+          style="min-height: 430px; font-family: ui-monospace, monospace"
+        ></textarea>
+        <div class="notice error hidden" id="editError"></div>
+      </div>
+      <div class="dialogFoot">
+        <button class="btn" data-close="editDialog">キャンセル</button
+        ><button class="btn primary" id="editSaveBtn">保存</button>
+      </div>
+    </dialog>
+    <dialog id="historyDialog">
+      <div class="dialogHead">
+        <h2>保存した会議</h2>
+        <button class="btn small" data-close="historyDialog">閉じる</button>
+      </div>
+      <div class="dialogBody" id="historyList"></div>
+    </dialog>
+    <dialog id="exportDialog">
+      <div class="dialogHead">
+        <h2>出力</h2>
+        <button class="btn small" data-close="exportDialog">閉じる</button>
+      </div>
+      <div class="dialogBody">
+        <div class="actions">
+          <button class="btn primary" id="downloadJson">JSONを保存</button
+          ><button class="btn primary" id="downloadMd">Markdownを保存</button
+          ><button class="btn" id="copyMd">Markdownをコピー</button>
+        </div>
+        <div class="field">
+          <label>デバッグログ</label>
+          <p class="notice warn">
+            議題・背景・モデルへの指示・生出力を含むことがあります。保存前に内容を確認してください。
+          </p>
+          <div class="actions">
+            <button class="btn primary" id="openDebugLog">ログを確認</button
+            ><button class="btn" id="downloadDebugLog">完全ログを保存</button><button class="btn" id="downloadDebugLogRedacted">伏字ログを保存</button><button class="btn danger" id="clearDebugLog">ログを消去</button>
+          </div>
+        </div>
+        <div class="field">
+          <label>JSONから復元</label
+          ><input
+            type="file"
+            class="input"
+            id="importFile"
+            accept="application/json,.json"
+          />
+        </div>
+      </div>
+    </dialog>
+    <dialog id="debugDialog">
+      <div class="dialogHead">
+        <h2>デバッグログ</h2>
+        <button class="btn small" data-close="debugDialog">閉じる</button>
+      </div>
+      <div class="dialogBody">
+        <p class="notice">
+          この内容をそのままコピーまたは保存して共有できます。不要な入力情報は削除してください。
+        </p>
+        <textarea
+          id="debugLogText"
+          style="
+            min-height: 480px;
+            font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+            font-size: 12px;
+          "
+        ></textarea>
+      </div>
+      <div class="dialogFoot">
+        <button class="btn" id="copyDebugLog">コピー</button
+        ><button class="btn primary" id="saveDebugLogFromDialog">保存</button>
+      </div>
+    </dialog>
+
+    <dialog id="resultDetailDialog">
+      <div class="dialogHead">
+        <h2 id="resultDetailTitle">生成・検証の詳細</h2>
+        <button class="btn small" data-close="resultDetailDialog">閉じる</button>
+      </div>
+      <div class="dialogBody">
+        <div id="resultDetailSummary"></div>
+        <div class="field"><label>モデルの生出力</label><textarea id="resultDetailRaw" readonly style="min-height:250px;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px"></textarea></div>
+        <div class="field"><label>採用データ</label><textarea id="resultDetailNormalized" readonly style="min-height:250px;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px"></textarea></div>
+      </div>
+    </dialog>
+    <script defer src="./src/config.js"></script>
+    <script defer src="./src/state.js"></script>
+    <script defer src="./src/validation.js"></script>
+    <script defer src="./src/ai.js"></script>
+    <script defer src="./src/workflow.js"></script>
+    <script defer src="./src/ui.js"></script>
+    <script defer src="./src/persistence.js"></script>
+    <script defer src="./src/test-harness.js"></script>
+    <script defer src="./src/main.js"></script>
+  </body>
+</html>

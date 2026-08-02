@@ -1,0 +1,29 @@
+{
+  "testCaseId": "telework-generation-01",
+  "testType": "generation",
+  "title": "週2日テレワーク標準化",
+  "input": {
+    "topic": "市役所は週2日のテレワークを標準化すべきか。",
+    "context": "現在は所属長の判断で不定期に実施している。対象職員は約600人である。庁内ネットワークへの接続環境は整備済みである。",
+    "constraints": "窓口業務の継続が必要である。追加の大型システム投資は行わない。令和9年度からの運用開始を検討する。",
+    "stakeholders": "職員、管理職、窓口利用者、情報システム部門、人事部門",
+    "desiredOutcome": "推奨判断",
+    "focus": "業務効率、住民サービス、情報セキュリティ、職員満足度",
+    "detail": "standard",
+    "mode": "quick",
+    "warningPolicy": "blocking_only"
+  },
+  "expected": {
+    "completedHats": 7,
+    "maxRetries": 1,
+    "requiredStakeholders": [
+      "職員",
+      "管理職",
+      "窓口利用者",
+      "情報システム部門",
+      "人事部門"
+    ],
+    "maxTotalDurationMs": 900000,
+    "allowedBlockingWarnings": 0
+  }
+}

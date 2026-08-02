@@ -1,0 +1,29 @@
+{
+  "testCaseId": "night-library-generation-01",
+  "testType": "generation",
+  "title": "図書館夜間開館",
+  "input": {
+    "topic": "市立図書館の平日開館時間を22時まで延長すべきか。",
+    "context": "現在の平日閉館時刻は19時である。夕方以降の利用要望が寄せられている。年間利用者は約30万人である。",
+    "constraints": "年間追加費用は1,200万円以内とする。新規常勤職員は採用しない。次年度からの開始を想定する。",
+    "stakeholders": "利用者、図書館職員、指定管理者、近隣住民、市議会、警備担当者、財政担当者",
+    "desiredOutcome": "推奨判断",
+    "focus": "利用効果、費用、安全性、職員負担",
+    "detail": "standard",
+    "mode": "quick",
+    "warningPolicy": "review_required"
+  },
+  "expected": {
+    "completedHats": 7,
+    "maxRetries": 1,
+    "requiredStakeholders": [
+      "近隣住民",
+      "市議会"
+    ],
+    "forbiddenConcepts": [
+      "オンラインサービスの拡充"
+    ],
+    "maxTotalDurationMs": 900000,
+    "allowedBlockingWarnings": 0
+  }
+}
