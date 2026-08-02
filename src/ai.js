@@ -1,3 +1,6 @@
+const GREEN_GENERATION_TIMEOUT_MS=6*60*1000;
+const destroyedSessions=new WeakSet();
+
 function createInputBase(minimal=false){return {topic:safeText(state.input.topic,minimal?240:420),context:safeText(state.input.context,minimal?360:750),constraints:safeText(state.input.constraints,minimal?300:650),stakeholders:state.deterministic.stakeholders.map(x=>({id:x.id,name:x.name,priority:x.priority})),desiredOutcome:state.input.desiredOutcome,focus:state.deterministic.focusItems,detail:state.input.detail};}
 function compactResult(id,r){
   if(!r)return null;
@@ -64,34 +67,54 @@ async function ensureBaseSession(signal){
   ai.baseSession=await ai.api.create(options);ai.status="available";ai.label="モデル準備完了";updateAIPill();debugLog("session-create-complete",{kind:"base",contextWindow:ai.baseSession.contextWindow});return ai.baseSession;
 }
 async function createHatSession(signal){const base=await ensureBaseSession(signal);if(!base)return null;debugLog("session-create-start",{kind:"hat"});const session=typeof base.clone==="function"?await base.clone({signal}):await ai.api.create({...AI_SESSION_OPTIONS,initialPrompts:[{role:"system",content:SYSTEM_PROMPT}],signal});debugLog("session-create-complete",{kind:"hat"});return session;}
-function destroySession(session,kind="hat"){try{session?.destroy?.();debugLog("session-destroy",{kind});}catch{}}
+function destroySession(session,kind="hat"){if(!session||destroyedSessions.has(session))return;try{destroyedSessions.add(session);session.destroy?.();debugLog("session-destroy",{kind});}catch{}}
 function destroyBaseSession(){destroySession(ai.baseSession,"base");ai.baseSession=null;}
 function stopGeneration(){abortController?.abort();destroySession(activeHatSession,"hat");activeHatSession=null;stopElapsed();}
 
 function classifyQuotaError(error){const msg=String(error?.message||"").toLowerCase();if(msg.includes("response exceeded output limits")||msg.includes("truncated")||msg.includes("output limit"))return "output_limit";if(Number.isFinite(error?.requested)&&Number.isFinite(error?.contextWindow))return "input_context";return "quota_unknown";}
-function isRetryable(error,attempt){if(attempt>=2)return false;if(["AbortError","NotSupportedError","ReferenceError","TypeError"].includes(error?.name))return false;return ["QuotaExceededError","SchemaValidationError","SemanticValidationError","SyntaxError"].includes(error?.name)||/json/i.test(error?.message||"");}
+function isRetryable(error,attempt){if(attempt>=2)return false;if(["AbortError","NotSupportedError","ReferenceError","TypeError"].includes(error?.name))return false;return ["QuotaExceededError","SchemaValidationError","SemanticValidationError","SyntaxError","GenerationTimeoutError"].includes(error?.name)||/json/i.test(error?.message||"");}
+function promptWithTimeout(session,prompt,options,id){
+  if(!session)return Promise.resolve("");
+  const timeoutMs=id==="green"?GREEN_GENERATION_TIMEOUT_MS:0;
+  if(!timeoutMs)return session.prompt(prompt,options);
+  return new Promise((resolve,reject)=>{
+    let settled=false;
+    const timer=setTimeout(()=>{
+      if(settled)return;settled=true;destroySession(session,"hat");if(activeHatSession===session)activeHatSession=null;
+      const error=new Error(`緑の帽子が${Math.round(timeoutMs/60000)}分以内に応答しませんでした`);error.name="GenerationTimeoutError";error.timeoutMs=timeoutMs;
+      debugLog("generation-timeout",{hatId:id,timeoutMs});reject(error);
+    },timeoutMs);
+    Promise.resolve(session.prompt(prompt,options)).then(
+      value=>{if(settled)return;settled=true;clearTimeout(timer);resolve(value);},
+      error=>{if(settled)return;settled=true;clearTimeout(timer);reject(error);}
+    );
+  });
+}
+function failedAttemptMeta({attempt,variant,attemptId,startedAt,prompt,raw,measured,session,error}){const completedAt=Date.now();return {attempt,attemptId:attemptId||null,startedAt:new Date(startedAt).toISOString(),completedAt:new Date(completedAt).toISOString(),durationMs:Math.max(0,completedAt-startedAt),promptLength:prompt.length,responseLength:raw.length,contextUsageBefore:session?.contextUsage??null,measuredContextUsage:measured,contextWindow:session?.contextWindow??null,schemaVariant:variant,error:errorData(error)};}
 
 async function structuredAttempt(id,variant,attempt,opt,previousErrors){
   const session=await createHatSession(abortController.signal);activeHatSession=session;const schemaContext=id==="blue_closing"?conclusionSchemaContext(state):state;const schema=schemaFor(id,variant,schemaContext);const compact=variant==="compact";
+  let prompt="",measured=null,raw="",attemptStarted=Date.now(),attemptId=null;
   try{
-    setHatPhase(id,"measuring_context");const prompt=buildPrompt(id,{...opt,compact},attempt,previousErrors);let measured=null;
+    setHatPhase(id,"measuring_context");prompt=buildPrompt(id,{...opt,compact},attempt,previousErrors);attemptStarted=Date.now();
     if(session?.measureContextUsage){try{measured=await session.measureContextUsage(prompt,{responseConstraint:schema});}catch(e){debugLog("context-measure-error",{hatId:id,error:errorData(e)});}}
     debugLog("context-usage",{hatId:id,attempt,schemaVariant:variant,measured,contextUsage:session?.contextUsage??null,contextWindow:session?.contextWindow??null,promptLength:prompt.length});
-    setHatPhase(id,"generating");currentAttemptId=`${currentRunId||"manual"}-${id}-${attempt}`;const started=Date.now();debugLog("structured-generation-start",{hatId:id,attempt,schemaVariant:variant,promptLength:prompt.length,prompt});
-    const raw=session?await session.prompt(prompt,{responseConstraint:schema,signal:abortController.signal}):JSON.stringify(demoResult(id,variant));
+    setHatPhase(id,"generating");currentAttemptId=`${currentRunId||"manual"}-${id}-${attempt}`;attemptId=currentAttemptId;const started=Date.now();debugLog("structured-generation-start",{hatId:id,attempt,schemaVariant:variant,promptLength:prompt.length,prompt});
+    raw=session?await promptWithTimeout(session,prompt,{responseConstraint:schema,signal:abortController.signal},id):JSON.stringify(demoResult(id,variant));
     const durationMs=Date.now()-started;debugLog("structured-generation-complete",{hatId:id,attempt,schemaVariant:variant,rawLength:raw.length,raw});
     setHatPhase(id,"receiving");let candidate;try{candidate=JSON.parse(raw);}catch(e){e.name="SyntaxError";e.raw=raw;throw e;}
     setHatPhase(id,"validating_schema");const schemaErrors=validateSchema(candidate,schema);debugLog("schema-validation",{hatId:id,attempt,valid:!schemaErrors.length,errors:schemaErrors});if(schemaErrors.length)throw new SchemaValidationError("JSON Schemaを満たしません",schemaErrors);
     setHatPhase(id,"validating_semantics");const semantic=semanticValidate(id,candidate,state,variant);debugLog("semantic-validation",{hatId:id,attempt,warnings:semantic.warnings,errors:semantic.errors});if(semantic.errors.length)throw new SemanticValidationError("意味検証を満たしません",semantic.errors);
     const validation={valid:true,errors:[],warnings:semantic.warnings,placeholderHits:semantic.placeholderHits,missingRequired:[],semanticChecks:semantic.semanticChecks};
-    return {candidate:transformCandidate(id,candidate,variant),raw,validation,attemptMeta:{attempt,attemptId:currentAttemptId,startedAt:new Date(started).toISOString(),completedAt:now(),durationMs,promptLength:prompt.length,responseLength:raw.length,contextUsageBefore:session?.contextUsage??null,contextWindow:session?.contextWindow??null,schemaVariant:variant},formatUsed:session?"json_schema":"demo"};
-  }finally{destroySession(session,"hat");activeHatSession=null;currentAttemptId=null;}
+    return {candidate:transformCandidate(id,candidate,variant),raw,validation,attemptMeta:{attempt,attemptId,startedAt:new Date(started).toISOString(),completedAt:now(),durationMs,promptLength:prompt.length,responseLength:raw.length,contextUsageBefore:session?.contextUsage??null,measuredContextUsage:measured,contextWindow:session?.contextWindow??null,schemaVariant:variant},formatUsed:session?"json_schema":"demo"};
+  }catch(e){e.attemptMeta=failedAttemptMeta({attempt,variant,attemptId,startedAt:attemptStarted,prompt,raw,measured,session,error:e});throw e;}
+  finally{destroySession(session,"hat");activeHatSession=null;currentAttemptId=null;}
 }
 async function callAI(id,opt={}){
   const attempts=[];let previousErrors=[];let variant=id==="red"?selectRedSchemaVariant(state.deterministic.stakeholders.length):"normal";
   for(let attempt=1;attempt<=2;attempt++){
     try{const result=await structuredAttempt(id,variant,attempt,opt,previousErrors);attempts.push(result.attemptMeta);return {...result,attempts};}
-    catch(e){const details=e.details||[e.message];debugLog("structured-generation-error",{hatId:id,attempt,schemaVariant:variant,error:errorData(e),details});attempts.push({attempt,attemptId:currentAttemptId,startedAt:null,completedAt:now(),durationMs:0,promptLength:0,responseLength:0,schemaVariant:variant,error:errorData(e)});if(!isRetryable(e,attempt)){e.attempts=attempts;throw e;}previousErrors=details;const quota=e.name==="QuotaExceededError"?classifyQuotaError(e):null;if(quota==="output_limit"||quota==="input_context"||id==="red"||id==="green"||id==="blue_closing")variant="compact";debugLog("structured-generation-retry",{hatId:id,nextAttempt:attempt+1,reason:errorData(e),schemaVariant:variant});if(state.runSummary)state.runSummary.retryCount++;setHatPhase(id,"retrying_compact");}
+    catch(e){const details=e.details||[e.message];debugLog("structured-generation-error",{hatId:id,attempt,schemaVariant:variant,error:errorData(e),details});attempts.push(e.attemptMeta||{attempt,attemptId:null,startedAt:null,completedAt:now(),durationMs:0,promptLength:0,responseLength:0,contextUsageBefore:null,measuredContextUsage:null,contextWindow:null,schemaVariant:variant,error:errorData(e)});if(!isRetryable(e,attempt)){e.attempts=attempts;throw e;}previousErrors=details;const quota=e.name==="QuotaExceededError"?classifyQuotaError(e):null;if(quota==="output_limit"||quota==="input_context"||id==="red"||id==="green"||id==="blue_closing")variant="compact";debugLog("structured-generation-retry",{hatId:id,nextAttempt:attempt+1,reason:errorData(e),schemaVariant:variant});if(state.runSummary)state.runSummary.retryCount++;setHatPhase(id,"retrying_compact");}
   }
   throw new Error("再試行に失敗しました");
 }
