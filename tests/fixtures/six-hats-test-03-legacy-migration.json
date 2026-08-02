@@ -1,0 +1,77 @@
+{
+  "appVersion": "1.0.0",
+  "schemaVersion": 1,
+  "id": "33333333-3333-4333-8333-333333333333",
+  "createdAt": "2026-07-18T00:00:00.000Z",
+  "updatedAt": "2026-07-18T00:00:00.000Z",
+  "input": {
+    "topic": "自治体は製品プラスチックの分別収集を開始すべきか。",
+    "context": "現在は容器包装プラスチックのみを分別収集している。中間処理施設の余力は小さい。",
+    "constraints": "財政に余裕はない。設備は20年経過している。",
+    "stakeholders": "住民、市職員、中間処理業者、リサイクラー",
+    "desiredOutcome": "推奨判断",
+    "focus": "コスト、実現性",
+    "detail": "standard",
+    "mode": "standard"
+  },
+  "results": {
+    "blue_opening": {
+      "reframedTopic": "製品プラスチック導入の検討",
+      "coreQuestion": "分別収集を開始すべきか。",
+      "decisionCriteria": ["コスト", "実現性"],
+      "assumptions": ["施設余力は小さい"],
+      "discussionPoints": ["処理能力", "費用"],
+      "outOfScope": [],
+      "ambiguities": ["対象量"]
+    },
+    "white": {
+      "inputFacts": ["中間処理施設の余力は小さい。"],
+      "generalObservations": [],
+      "assumptions": ["施設余力に余裕がある。"],
+      "missingInformation": ["対象量"],
+      "researchQuestions": [],
+      "numbers": []
+    },
+    "red": {
+      "stakeholders": [
+        {
+          "name": "住民",
+          "positiveFeelings": [],
+          "negativeFeelings": [],
+          "intuitiveReaction": "手間が増える。",
+          "communicationConcern": ""
+        }
+      ],
+      "hiddenEmotions": [],
+      "consensusConcerns": []
+    },
+    "black": {
+      "summary": "列ずれした旧版データ。",
+      "risks": [
+        {
+          "name": "リスク名",
+          "cause": "処理能力不足",
+          "likelihood": 1,
+          "impact": 1,
+          "residualRisk": ""
+        },
+        {
+          "name": "対応策",
+          "cause": "",
+          "likelihood": 1,
+          "impact": 1,
+          "residualRisk": ""
+        }
+      ],
+      "fatalConditions": []
+    }
+  },
+  "meta": {
+    "status": "paused",
+    "currentHat": null,
+    "important": [],
+    "excluded": [],
+    "edited": [],
+    "stale": []
+  }
+}
