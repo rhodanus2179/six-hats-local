@@ -23,7 +23,7 @@
   state=ensureState(state);
 
   hashBuildAssets=async function(){
-    const schemaText=JSON.stringify({base:BASE_SCHEMAS,red:"dynamic-v2",green:"schema4-lite",blue_closing:"schema4-lite"});
+    const schemaText=JSON.stringify({base:BASE_SCHEMAS,red:"dynamic-v2",green:"schema4-lite-concerns",blue_closing:"schema4-lite"});
     const hashes=await Promise.all([sha256Short(SYSTEM_PROMPT),sha256Short(JSON.stringify(ROLE_PROMPTS)),sha256Short(schemaText),sha256Short("validator-v3-schema4-lite")]);
     state.build={...BUILD,systemPromptHash:hashes[0],rolePromptsHash:hashes[1],schemaSetHash:hashes[2],validatorConfigHash:hashes[3]};
   };
@@ -76,10 +76,19 @@
   function makeTopBenefits(ctx,compact){return arr(ctx.results?.yellow?.benefits).slice(0,2).map((x,i)=>({benefitId:`B-${String(i+1).padStart(3,"0")}`,name:safeText(x.name,120),description:safeText(x.description,compact?120:180)}));}
   function makeMissing(ctx,compact){const rank={high:0,medium:1,low:2};return [...arr(ctx.results?.white?.missingInformation)].sort((a,b)=>(rank[a.priority]??9)-(rank[b.priority]??9)).slice(0,compact?2:3).map((x,i)=>({missingId:`MI-${String(i+1).padStart(3,"0")}`,text:safeText(x.text,compact?140:200),priority:x.priority}));}
   function makeActions(pairs,missing,compact){
-    const out=[],seen=new Set(),add=x=>{const k=normalizeText(x.text);if(k&&!seen.has(k)){seen.add(k);out.push(x);}};
-    for(const {idea} of pairs){const base=idea.ideaId.replace(/[^A-Z0-9]/gi,"");if(String(idea.pilotMethod||"").trim())add({actionId:`ACT-${base}-PILOT`,ideaId:idea.ideaId,type:"pilot",text:safeText(idea.pilotMethod,220)});arr(idea.requirements).slice(0,2).forEach((text,i)=>add({actionId:`ACT-${base}-REQ-${i+1}`,ideaId:idea.ideaId,type:"requirement",text:safeText(text,220)}));if(!out.some(x=>x.ideaId===idea.ideaId))add({actionId:`ACT-${base}-REVIEW`,ideaId:idea.ideaId,type:"review",text:`「${safeText(idea.name,100)}」の実施条件を確認する`});}
+    const limit=compact?4:6,out=[],seen=new Set();
+    const add=x=>{if(out.length>=limit)return false;const key=`${x.ideaId||"GLOBAL"}|${normalizeText(x.text)}`;if(!normalizeText(x.text)||seen.has(key))return false;seen.add(key);out.push(x);return true;};
+    const groups=pairs.map(({idea})=>{
+      const base=idea.ideaId.replace(/[^A-Z0-9]/gi,""),items=[];
+      if(String(idea.pilotMethod||"").trim())items.push({actionId:`ACT-${base}-PILOT`,ideaId:idea.ideaId,type:"pilot",text:safeText(idea.pilotMethod,220)});
+      arr(idea.requirements).slice(0,2).forEach((text,i)=>items.push({actionId:`ACT-${base}-REQ-${i+1}`,ideaId:idea.ideaId,type:"requirement",text:safeText(text,220)}));
+      if(!items.length)items.push({actionId:`ACT-${base}-REVIEW`,ideaId:idea.ideaId,type:"review",text:`「${safeText(idea.name,100)}」の実施条件を確認する`});
+      return items;
+    });
+    for(const group of groups)add(group[0]);
+    for(let depth=1;out.length<limit&&groups.some(group=>group[depth]);depth++)for(const group of groups)if(group[depth])add(group[depth]);
     for(const m of missing.filter(x=>x.priority==="high"))add({actionId:`ACT-RESEARCH-${m.missingId}`,ideaId:null,type:"research",text:safeText(m.text,220)});
-    return out.slice(0,compact?4:6);
+    return out.slice(0,limit);
   }
   function buildFinalBlueArtifacts(ctx=state,variant="normal"){
     const compact=variant==="compact",selection=validateCandidateSelection(ctx.candidateSelection,ctx);if(!selection.valid)throw new Error(selection.errors.join(" / "));
