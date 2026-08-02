@@ -23,21 +23,24 @@
   state=ensureState(state);
 
   hashBuildAssets=async function(){
-    const schemaText=JSON.stringify({base:BASE_SCHEMAS,red:"dynamic-v2",green:"schema4-lite-concerns",blue_closing:"schema4-lite"});
-    const hashes=await Promise.all([sha256Short(SYSTEM_PROMPT),sha256Short(JSON.stringify(ROLE_PROMPTS)),sha256Short(schemaText),sha256Short("validator-v3-schema4-lite")]);
+    const schemaText=JSON.stringify({base:BASE_SCHEMAS,red:"dynamic-v2",green:"schema4-lite-concerns-compact-default",blue_closing:"schema4-lite"});
+    const hashes=await Promise.all([sha256Short(SYSTEM_PROMPT),sha256Short(JSON.stringify(ROLE_PROMPTS)),sha256Short(schemaText),sha256Short("validator-v3-schema4-lite-reversible-actions")]);
     state.build={...BUILD,systemPromptHash:hashes[0],rolePromptsHash:hashes[1],schemaSetHash:hashes[2],validatorConfigHash:hashes[3]};
   };
 
   function reasonsFor(idea){
-    const out=[];
+    const out=[],notFlagged=[];
     for(const x of arr(idea?.constraintAssessments)){
       if(x.status==="violates")out.push({code:"constraint_violation",relatedIds:[x.constraintId]});
+      else if(x.status==="unknown"&&x.note==="no_concern_reported")notFlagged.push(x.constraintId);
       else if(x.status==="unknown")out.push({code:"constraint_unknown",relatedIds:[x.constraintId]});
     }
     for(const x of arr(idea?.outOfScopeAssessments)){
       if(x.status==="conflicts")out.push({code:"out_of_scope_conflict",relatedIds:[x.outOfScopeId]});
+      else if(x.status==="unknown"&&x.note==="no_concern_reported")notFlagged.push(x.outOfScopeId);
       else if(["unknown","possibly_conflicts"].includes(x.status))out.push({code:"out_of_scope_uncertain",relatedIds:[x.outOfScopeId]});
     }
+    if(notFlagged.length)out.push({code:"no_concern_reported",relatedIds:notFlagged});
     if(!arr(idea?.constraintAssessments).length)out.push({code:"assessment_missing",relatedIds:[]});
     return out;
   }
@@ -46,7 +49,18 @@
     if(r.some(x=>["constraint_violation","out_of_scope_conflict"].includes(x.code)))return "exclude";
     return r.length?"conditional":"include";
   }
-  function reasonLabel(r){const id=arr(r.relatedIds)[0]||"";return ({constraint_violation:`制約 ${id} に違反する可能性`,out_of_scope_conflict:`対象外 ${id} に抵触`,constraint_unknown:`制約 ${id} の評価が不明`,out_of_scope_uncertain:`対象外 ${id} との関係が未確定`,assessment_missing:"制約評価が未実施",user_override:"ユーザーが採否を変更"})[r.code]||r.code;}
+  function reasonLabel(r){
+    const id=arr(r.relatedIds)[0]||"";
+    return ({
+      constraint_violation:`制約 ${id} に違反する可能性`,
+      out_of_scope_conflict:`対象外 ${id} に抵触`,
+      constraint_unknown:`制約 ${id} の評価が不明`,
+      out_of_scope_uncertain:`対象外 ${id} との関係が未確定`,
+      no_concern_reported:"AIから懸念報告なし（制約適合を確認した意味ではありません）",
+      assessment_missing:"制約評価が未実施",
+      user_override:"ユーザーが採否を変更"
+    })[r.code]||r.code;
+  }
 
   function initializeCandidateSelection(force=false,ctx=state){
     const ideas=arr(ctx.results?.green?.ideas),version=ctx.resultMeta?.green?.updatedAt||null;
@@ -75,14 +89,19 @@
   function makeTopRisks(ctx,compact){return [...arr(ctx.results?.black?.risks)].sort((a,b)=>((b.likelihood||0)*(b.impact||0))-((a.likelihood||0)*(a.impact||0))).slice(0,compact?2:3).map((x,i)=>({riskId:`R-${String(i+1).padStart(3,"0")}`,name:safeText(x.name,120),cause:safeText(x.cause,compact?120:180),likelihood:Number(x.likelihood)||0,impact:Number(x.impact)||0}));}
   function makeTopBenefits(ctx,compact){return arr(ctx.results?.yellow?.benefits).slice(0,2).map((x,i)=>({benefitId:`B-${String(i+1).padStart(3,"0")}`,name:safeText(x.name,120),description:safeText(x.description,compact?120:180)}));}
   function makeMissing(ctx,compact){const rank={high:0,medium:1,low:2};return [...arr(ctx.results?.white?.missingInformation)].sort((a,b)=>(rank[a.priority]??9)-(rank[b.priority]??9)).slice(0,compact?2:3).map((x,i)=>({missingId:`MI-${String(i+1).padStart(3,"0")}`,text:safeText(x.text,compact?140:200),priority:x.priority}));}
+  function isIrreversibleActionText(text){return /契約(?:締結|を締結|する)?|本格導入|全面導入|全域導入|正式導入|施設建設|設備整備|発注|購入/.test(String(text||""));}
+  function reversiblePilotText(idea){
+    const raw=safeText(idea?.pilotMethod,220);
+    if(raw&&!isIrreversibleActionText(raw))return raw;
+    return `「${safeText(idea?.name,100)}」の実施可能性、費用、受入条件をヒアリングまたは小規模試験で確認する`;
+  }
+  function requirementCheckText(text){return `「${safeText(text,150)}」の条件・担当・費用を事前確認する`;}
   function makeActions(pairs,missing,compact){
     const limit=compact?4:6,out=[],seen=new Set();
     const add=x=>{if(out.length>=limit)return false;const key=`${x.ideaId||"GLOBAL"}|${normalizeText(x.text)}`;if(!normalizeText(x.text)||seen.has(key))return false;seen.add(key);out.push(x);return true;};
     const groups=pairs.map(({idea})=>{
-      const base=idea.ideaId.replace(/[^A-Z0-9]/gi,""),items=[];
-      if(String(idea.pilotMethod||"").trim())items.push({actionId:`ACT-${base}-PILOT`,ideaId:idea.ideaId,type:"pilot",text:safeText(idea.pilotMethod,220)});
-      arr(idea.requirements).slice(0,2).forEach((text,i)=>items.push({actionId:`ACT-${base}-REQ-${i+1}`,ideaId:idea.ideaId,type:"requirement",text:safeText(text,220)}));
-      if(!items.length)items.push({actionId:`ACT-${base}-REVIEW`,ideaId:idea.ideaId,type:"review",text:`「${safeText(idea.name,100)}」の実施条件を確認する`});
+      const base=idea.ideaId.replace(/[^A-Z0-9]/gi,""),items=[{actionId:`ACT-${base}-PILOT`,ideaId:idea.ideaId,type:"pilot",text:reversiblePilotText(idea)}];
+      arr(idea.requirements).slice(0,2).forEach((text,i)=>items.push({actionId:`ACT-${base}-REQ-${i+1}`,ideaId:idea.ideaId,type:"requirement_check",text:requirementCheckText(text)}));
       return items;
     });
     for(const group of groups)add(group[0]);
@@ -102,6 +121,7 @@
     if(dup.length)errors.push(`案別評価IDが重複しています: ${unique(dup).join("、")}`);if(missing.length)errors.push(`未評価の候補があります: ${missing.join("、")}`);if(unknown.length)errors.push(`未知の評価対象があります: ${unique(unknown).join("、")}`);
     const selectedActions=arr(data.selectedActionIds),unknownActions=selectedActions.filter(x=>!actionIds.includes(x));if(new Set(selectedActions).size!==selectedActions.length)errors.push("アクションIDが重複しています");if(unknownActions.length)errors.push(`未知のアクションIDがあります: ${unique(unknownActions).join("、")}`);
     const actionObjects=selectedActions.map(id=>a.actionCandidates.find(x=>x.actionId===id)).filter(Boolean);if(["proceed","conditional","pilot"].includes(data.decisionType)&&!actionObjects.some(x=>x.ideaId===data.selectedIdeaId))errors.push("選択案に属する着手候補を1件以上選択してください");if(actionObjects.some(x=>x.ideaId&&x.ideaId!==data.selectedIdeaId))errors.push("選択案以外に属するアクションが含まれています");
+    if(actionObjects.some(x=>isIrreversibleActionText(x.text)))errors.push("契約・全面導入など不可逆な着手候補が含まれています");
     const allZero=arr(data.ideaEvaluations).every(x=>Number(x.feasibility)===0&&Number(x.recommendationScore)===0);if(allZero&&!['research','compare'].includes(data.decisionType))errors.push("全案未評価の場合は追加調査または比較継続を選択してください");
     const excluded=arr(ctx.candidateSelection?.items).filter(x=>x.disposition==="exclude").map(x=>arr(ctx.results?.green?.ideas).find(y=>y.ideaId===x.ideaId)).filter(Boolean),text=normalizeText(stringsIn({keyReasons:data.keyReasons,ideaEvaluations:data.ideaEvaluations}).join(" "));for(const idea of excluded){const name=normalizeText(idea.name);if(name&&text.includes(name))errors.push(`結論理由に除外案「${idea.name}」が含まれています`);}
     if(a.candidates.some(x=>x.disposition==="conditional"))warnings.push(createWarning("BLUE_CONDITIONAL_CANDIDATE","review_required","条件付き候補を含む比較です","blue_closing"));
@@ -112,6 +132,6 @@
     return {modelResult:clone(modelResult),decisionType:modelResult.decisionType,selectedIdea:{...clone(selectedIdea),disposition:selection?.disposition||"include"},evaluations:clone(modelResult.ideaEvaluations),keyReasons:clone(modelResult.keyReasons),selectedActions:arr(modelResult.selectedActionIds).map(id=>a.actionCandidates.find(x=>x.actionId===id)).filter(Boolean),successConditions:arr(selectedIdea?.requirements),topRisks:a.topRisks,missingInformation:a.missingInformation,informationCompleteness:calculateInformationCompleteness()};
   }
 
-  Object.assign(S,{freshSelection,ensureState,reasonsFor,reasonLabel,deriveInitialDisposition,initializeCandidateSelection,validateCandidateSelection,selectedPairs,buildFinalBlueArtifacts,validateFinalBlue,assembleFinalDecision});
+  Object.assign(S,{freshSelection,ensureState,reasonsFor,reasonLabel,deriveInitialDisposition,initializeCandidateSelection,validateCandidateSelection,selectedPairs,isIrreversibleActionText,reversiblePilotText,buildFinalBlueArtifacts,validateFinalBlue,assembleFinalDecision});
   Object.assign(window,{deriveInitialDisposition,initializeCandidateSelection,validateCandidateSelection,buildFinalBlueArtifacts});
 })();
