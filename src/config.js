@@ -1,16 +1,16 @@
 const BUILD = Object.freeze({
-  appVersion: "1.2.0",
-  schemaVersion: 3,
-  promptVersion: 2,
-  validatorVersion: 2,
-  buildDate: "2026-07-19",
-  buildId: "six-hats-1.2.0-20260719"
+  appVersion: "1.3.0",
+  schemaVersion: 4,
+  promptVersion: 3,
+  validatorVersion: 3,
+  buildDate: "2026-08-02",
+  buildId: "six-hats-1.3.0-schema4-lite-20260802"
 });
 const APP_VERSION = BUILD.appVersion;
 const SCHEMA_VERSION = BUILD.schemaVersion;
-const STORAGE_KEY = "sixHatsMeetings";
-const BACKUP_KEY = "sixHatsMeetingsBackupV2";
-const MIGRATION_MARKER_KEY = "sixHatsMigrationV3Done";
+const STORAGE_KEY = "sixHatsMeetingsV4";
+const BACKUP_KEY = "sixHatsMeetingsBackupV4";
+const MIGRATION_MARKER_KEY = "sixHatsMigrationV4Done";
 const DEV_MODE = new URLSearchParams(location.search).get("dev") === "1";
 
 const HATS = [
@@ -20,13 +20,13 @@ const HATS = [
   {id:"black",name:"黒い帽子",short:"リスク",role:"失敗要因・弱点・対策を検討",color:"var(--black)",icon:"⚫"},
   {id:"yellow",name:"黄色い帽子",short:"利点",role:"価値・機会・成功条件を整理",color:"var(--yellow)",icon:"🟡"},
   {id:"green",name:"緑の帽子",short:"創造",role:"二択を超える代替案を発想",color:"var(--green)",icon:"🟢"},
-  {id:"blue_closing",name:"青い帽子",short:"統合",role:"全視点を統合し次の行動を提示",color:"var(--blue)",icon:"🔵"}
+  {id:"blue_closing",name:"青い帽子",short:"統合",role:"確定候補を比較し判断を提示",color:"var(--blue)",icon:"🔵"}
 ];
 const HAT_IDS = HATS.map(h => h.id);
 const DEPENDENTS = {
   blue_opening:["white","red","black","yellow","green","blue_closing"],
   white:["black","yellow","green","blue_closing"],
-  red:["blue_closing"],
+  red:[],
   black:["green","blue_closing"],
   yellow:["green","blue_closing"],
   green:["blue_closing"],
@@ -45,6 +45,7 @@ const SCORE_BASIS = ["explicit_user_input","derived_from_input","model_judgment"
 const WARNING_SEVERITIES = ["info","review_required","blocking"];
 const DISPLAY_LABELS = {
   proceed:"実施を推奨", conditional:"条件付きで実施", pilot:"試行後に判断", research:"追加調査後に判断", hold:"現時点では見送り", compare:"比較を継続",
+  include:"含める", exclude:"除外", auto:"自動", user:"ユーザー",
   short:"短期", medium:"中期", long:"長期",
   explicit_user_input:"ユーザー明示", derived_from_input:"入力から導出", model_judgment:"AIによる判断", externally_verified:"外部確認済み", insufficient_information:"情報不足",
   general_inference:"一般論からの推定", speculative:"仮説的", user_input:"ユーザー入力", assumed:"仮定", unknown:"不明",
@@ -63,13 +64,13 @@ const ROLE_PROMPTS = {
   red:"赤い帽子として、指定された関係者IDごとに、合理化しすぎず、主要な感情、直感、懸念、伝達上の注意を簡潔に整理してください。関係者名は書かず、必ず指定されたIDを使用してください。",
   black:"黒い帽子として、リスクを原因、可能性、影響、根拠、兆候、対策、残余リスクに分解してください。単なる否定で終わらせないでください。AIが判断した数値の根拠区分はmodel_judgmentとし、評価不能は0かつinsufficient_informationとしてください。",
   yellow:"黄色い帽子として、利点を説明、受益者、成立条件、評価指標、時間軸、根拠の強さとセットで整理してください。入力との接続が弱い効果は仮説的としてください。",
-  green:"緑の帽子として、二択を崩し、性質の異なる代替案を提示してください。指定された案IDを使用し、各案について入力制約と対象外事項への関係を全ID分評価してください。説明は重複を避けて簡潔にしてください。",
-  blue_closing:"最後の青い帽子として、各結果を統合し、推奨判断、比較案、主要リスク、成功条件、次の行動、不足情報、留意事項を示してください。緑案を利用する場合は案IDを参照してください。AIが判断した評価値の根拠区分はmodel_judgmentとし、評価不能は0かつinsufficient_informationとしてください。"
+  green:"緑の帽子として、二択を崩し、性質の異なる代替案を提示してください。指定された案IDを使用し、各案について入力制約と対象外事項への関係を全ID分評価してください。組合せ提案は表示用の発想メモ1件だけとし、説明は重複を避けて簡潔にしてください。",
+  blue_closing:"最後の青い帽子として、提示された候補案だけを比較してください。候補外の新しい施策を追加しないでください。候補案IDとアクションIDは入力にある値だけを使用してください。案名やアクション本文は再出力せず、比較、選択、短い理由付けだけを行ってください。"
 };
 
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
-const esc = s => String(s ?? "").replace(/[&<>"']/g, m => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"})[m]);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, m => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]));
 const arr = v => Array.isArray(v) ? v : [];
 const clone = v => v == null ? v : structuredClone(v);
 const unique = xs => [...new Set(xs.filter(Boolean))];
@@ -159,41 +160,45 @@ function schemaForGreen(variant,constraints,outOfScope){
   const ideaCount=variant==="compact"?3:4;
   const cIds=constraints.map(x=>x.id).slice(0,4);
   const oIds=outOfScope.map(x=>x.id).slice(0,4);
-  const assessmentC=sObject({constraintId:sEnum(cIds.length?cIds:["C-NONE"]),status:sEnum(["satisfies","violates","unknown"]),note:sString(100,0)});
-  const assessmentO=sObject({outOfScopeId:sEnum(oIds.length?oIds:["O-NONE"]),status:sEnum(["not_related","possibly_conflicts","conflicts","unknown"]),note:sString(100,0)});
+  const assessmentC=sObject({constraintId:sEnum(cIds.length?cIds:["C-NONE"]),status:sEnum(["satisfies","violates","unknown"]),note:sString(160,0)});
+  const assessmentO=sObject({outOfScopeId:sEnum(oIds.length?oIds:["O-NONE"]),status:sEnum(["not_related","possibly_conflicts","conflicts","unknown"]),note:sString(160,0)});
   const idea=sObject({
     ideaId:sEnum(Array.from({length:ideaCount},(_,i)=>`G-${String(i+1).padStart(3,"0")}`)),
-    name:sString(120,1),category:sEnum(["pilot","phased","regional","joint","outsourcing","process_change","combination","other"]),
-    description:sString(variant==="compact"?160:240,1),distinctiveFeature:sString(variant==="compact"?120:180,1),
-    benefits:sArray(sString(variant==="compact"?110:150,1),1,variant==="compact"?1:2),
-    challenges:sArray(sString(variant==="compact"?110:150,1),1,variant==="compact"?1:2),
-    requirements:sArray(sString(variant==="compact"?110:150,1),0,variant==="compact"?2:3),pilotMethod:sString(variant==="compact"?140:200,0),
+    name:sString(140,1),category:sEnum(["pilot","phased","regional","joint","outsourcing","process_change","combination","other"]),
+    description:sString(360,1),distinctiveFeature:sString(260,1),
+    benefits:sArray(sString(220,1),1,variant==="compact"?1:2),
+    challenges:sArray(sString(220,1),1,variant==="compact"?1:2),
+    requirements:sArray(sString(220,1),0,variant==="compact"?2:3),pilotMethod:sString(280,0),
     constraintAssessments:sArray(assessmentC,cIds.length,cIds.length),outOfScopeAssessments:sArray(assessmentO,oIds.length,oIds.length)
   });
-  return sObject({ideas:sArray(idea,ideaCount,ideaCount),combinationIdeas:sArray(sString(variant==="compact"?160:220,1),0,variant==="compact"?1:2)});
+  return sObject({
+    ideas:sArray(idea,ideaCount,ideaCount),
+    combinationSuggestion:sString(320,0)
+  });
 }
-function schemaForBlueClosing(variant,greenIdeas){
-  const count=variant==="compact"?2:3;
-  const sourceIds=greenIdeas.map(x=>x.ideaId).filter(Boolean);
-  const optionIds=Array.from({length:count},(_,i)=>`OPT-${String(i+1).padStart(3,"0")}`);
-  const option=sObject({
-    optionId:sEnum(optionIds),sourceType:sEnum(["green_idea","combination","baseline","new_synthesis"]),
-    sourceIdeaIds:sArray(sEnum(sourceIds.length?sourceIds:["G-NONE"]),0,2),label:sString(120,1),summary:sString(variant==="compact"?160:220,1),
-    advantages:sArray(sString(variant==="compact"?120:160,1),1,variant==="compact"?1:2),risks:sArray(sString(variant==="compact"?120:160,1),1,variant==="compact"?1:2),
-    feasibility:sInt(0,5),recommendationScore:sInt(0,5),scoreBasis:sEnum(SCORE_BASIS)
+function schemaForBlueClosing(variant,artifacts){
+  const candidates=arr(artifacts?.candidates);
+  const actions=arr(artifacts?.actionCandidates);
+  const candidateIds=candidates.map(x=>x.ideaId);
+  const actionIds=actions.map(x=>x.actionId);
+  const evaluation=sObject({
+    ideaId:sEnum(candidateIds.length?candidateIds:["G-NONE"]),
+    feasibility:sInt(0,5),
+    recommendationScore:sInt(0,5),
+    mainReason:sString(variant==="compact"?220:320,1),
+    mainRisk:sString(variant==="compact"?220:320,1)
   });
   return sObject({
-    executiveSummary:sString(variant==="compact"?300:500,1),
-    recommendation:sObject({type:sEnum(["proceed","conditional","pilot","research","hold","compare"]),label:sString(120,1),rationale:sString(variant==="compact"?260:380,1),optionId:sEnum(optionIds)}),
-    keyReasons:sArray(sString(variant==="compact"?160:220,1),2,variant==="compact"?3:4),
-    options:sArray(option,count,count),keyRisks:sArray(sString(180,1),0,variant==="compact"?3:4),successConditions:sArray(sString(180,1),0,variant==="compact"?3:4),
-    nextActions:sArray(sObject({order:sInt(1,4),action:sString(180,1),purpose:sString(180,1)}),2,variant==="compact"?3:4),
-    missingInformation:sArray(sString(200,1),0,variant==="compact"?3:5),caveats:sArray(sString(200,1),0,variant==="compact"?3:4)
+    decisionType:sEnum(["proceed","conditional","pilot","research","hold","compare"]),
+    selectedIdeaId:sEnum(candidateIds.length?candidateIds:["G-NONE"]),
+    ideaEvaluations:sArray(evaluation,candidateIds.length,candidateIds.length),
+    keyReasons:sArray(sString(variant==="compact"?220:320,1),2,variant==="compact"?2:3),
+    selectedActionIds:sArray(sEnum(actionIds.length?actionIds:["ACT-NONE"]),1,variant==="compact"?2:3)
   });
 }
 function schemaFor(id,variant="normal",ctx=state){
   if(id==="red") return schemaForRed(variant,ctx.deterministic?.stakeholders||[]);
   if(id==="green") return schemaForGreen(variant,ctx.deterministic?.constraints||[],ctx.decisionBoundary?.outOfScope||[]);
-  if(id==="blue_closing") return schemaForBlueClosing(variant,ctx.results?.green?.ideas||[]);
+  if(id==="blue_closing") return schemaForBlueClosing(variant,ctx.finalBlueArtifacts||buildFinalBlueArtifacts(ctx,variant));
   return BASE_SCHEMAS[id];
 }
