@@ -23,24 +23,22 @@
   state=ensureState(state);
 
   hashBuildAssets=async function(){
-    const schemaText=JSON.stringify({base:BASE_SCHEMAS,red:"dynamic-v2",green:"schema4-lite-concerns-compact-default",blue_closing:"schema4-lite"});
-    const hashes=await Promise.all([sha256Short(SYSTEM_PROMPT),sha256Short(JSON.stringify(ROLE_PROMPTS)),sha256Short(schemaText),sha256Short("validator-v3-schema4-lite-reversible-actions")]);
+    const schemaText=JSON.stringify({base:BASE_SCHEMAS,red:"dynamic-v2",green:"schema4-lite-alternatives-compact-default",blue_closing:"schema4-lite"});
+    const hashes=await Promise.all([sha256Short(SYSTEM_PROMPT),sha256Short(JSON.stringify(ROLE_PROMPTS)),sha256Short(schemaText),sha256Short("validator-v3-schema4-lite-policy-options")]);
     state.build={...BUILD,systemPromptHash:hashes[0],rolePromptsHash:hashes[1],schemaSetHash:hashes[2],validatorConfigHash:hashes[3]};
   };
 
   function reasonsFor(idea){
-    const out=[],notFlagged=[];
+    const out=[];
     for(const x of arr(idea?.constraintAssessments)){
       if(x.status==="violates")out.push({code:"constraint_violation",relatedIds:[x.constraintId]});
-      else if(x.status==="unknown"&&x.note==="no_concern_reported")notFlagged.push(x.constraintId);
       else if(x.status==="unknown")out.push({code:"constraint_unknown",relatedIds:[x.constraintId]});
     }
     for(const x of arr(idea?.outOfScopeAssessments)){
+      if(x.note==="no_concern_reported")continue;
       if(x.status==="conflicts")out.push({code:"out_of_scope_conflict",relatedIds:[x.outOfScopeId]});
-      else if(x.status==="unknown"&&x.note==="no_concern_reported")notFlagged.push(x.outOfScopeId);
       else if(["unknown","possibly_conflicts"].includes(x.status))out.push({code:"out_of_scope_uncertain",relatedIds:[x.outOfScopeId]});
     }
-    if(notFlagged.length)out.push({code:"no_concern_reported",relatedIds:notFlagged});
     if(!arr(idea?.constraintAssessments).length)out.push({code:"assessment_missing",relatedIds:[]});
     return out;
   }
@@ -56,7 +54,6 @@
       out_of_scope_conflict:`対象外 ${id} に抵触`,
       constraint_unknown:`制約 ${id} の評価が不明`,
       out_of_scope_uncertain:`対象外 ${id} との関係が未確定`,
-      no_concern_reported:"AIから懸念報告なし（制約適合を確認した意味ではありません）",
       assessment_missing:"制約評価が未実施",
       user_override:"ユーザーが採否を変更"
     })[r.code]||r.code;
@@ -123,6 +120,14 @@
     if(!candidateIds.includes(data.selectedIdeaId))errors.push("推奨案IDが確定候補に存在しません");
     const evalIds=arr(data.ideaEvaluations).map(x=>x.ideaId),dup=evalIds.filter((x,i)=>evalIds.indexOf(x)!==i),missing=candidateIds.filter(x=>!evalIds.includes(x)),unknown=evalIds.filter(x=>!candidateIds.includes(x));
     if(dup.length)errors.push(`案別評価IDが重複しています: ${unique(dup).join("、")}`);if(missing.length)errors.push(`未評価の候補があります: ${missing.join("、")}`);if(unknown.length)errors.push(`未知の評価対象があります: ${unique(unknown).join("、")}`);
+    for(const evaluation of arr(data.ideaEvaluations)){
+      const evaluationText=normalizeText(`${evaluation.mainReason||""} ${evaluation.mainRisk||""}`);
+      for(const other of a.candidates){
+        if(other.ideaId===evaluation.ideaId)continue;
+        const otherName=normalizeText(other.name);
+        if(otherName.length>=4&&evaluationText.includes(otherName))errors.push(`${evaluation.ideaId}の案別評価に別候補「${other.name}」の案名が含まれています`);
+      }
+    }
     const selectedActions=arr(data.selectedActionIds),unknownActions=selectedActions.filter(x=>!actionIds.includes(x));if(new Set(selectedActions).size!==selectedActions.length)errors.push("アクションIDが重複しています");if(unknownActions.length)errors.push(`未知のアクションIDがあります: ${unique(unknownActions).join("、")}`);
     const actionObjects=selectedActions.map(id=>a.actionCandidates.find(x=>x.actionId===id)).filter(Boolean);if(["proceed","conditional","pilot"].includes(data.decisionType)&&!actionObjects.some(x=>x.ideaId===data.selectedIdeaId))errors.push("選択案に属する着手候補を1件以上選択してください");if(actionObjects.some(x=>x.ideaId&&x.ideaId!==data.selectedIdeaId))errors.push("選択案以外に属するアクションが含まれています");
     if(actionObjects.some(x=>isIrreversibleActionText(x.text)))errors.push("契約・全面導入など不可逆な着手候補が含まれています");
