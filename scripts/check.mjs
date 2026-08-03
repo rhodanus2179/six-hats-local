@@ -19,6 +19,10 @@ const config = await readFile("src/config.js", "utf8");
 for (const marker of ['appVersion: "1.3.0"', "schemaVersion: 4", "promptVersion: 3", "validatorVersion: 3", 'sixHatsMeetingsV4', "combinationSuggestion", "selectedIdeaId", "selectedActionIds"]) {
   if (!config.includes(marker)) throw new Error(`Schema 4 config marker missing: ${marker}`);
 }
+const stateSource = await readFile("src/state.js", "utf8");
+for (const marker of ['x.status==="unknown"&&x.note!=="no_concern_reported"', 'x.status==="possibly_conflicts"']) {
+  if (!stateSource.includes(marker)) throw new Error(`Information-completeness marker missing: ${marker}`);
+}
 const baseAi = await readFile("src/ai.js", "utf8");
 for (const marker of ["GREEN_GENERATION_TIMEOUT_MS=6*60*1000", "GenerationTimeoutError", "generation-timeout", "failedAttemptMeta", "measuredContextUsage"]) {
   if (!baseAi.includes(marker)) throw new Error(`Timeout/attempt marker missing: ${marker}`);
@@ -26,14 +30,15 @@ for (const marker of ["GREEN_GENERATION_TIMEOUT_MS=6*60*1000", "GenerationTimeou
 const ai = await readFile("src/decision-gate-ai.js", "utf8");
 for (const marker of [
   "buildFinalBlueArtifacts", "candidateCount", "contextRatio", "selectedActionIds",
-  "constraintConcerns", "outOfScopeConcerns", "normalizeGreenCandidate",
+  "constraintAssessments", "outOfScopeConcerns", "normalizeGreenCandidate",
   'variant=opt.deep?"normal":"compact"', "green-schema-selection", "no_concern_reported",
-  "GREEN_PILOT_NOT_REVERSIBLE", "ヒアリング、机上確認、試験搬入、小規模実証"
+  "GREEN_PILOT_NOT_REVERSIBLE", "調査や検証の手順そのものを案にしない",
+  "isValidationOnlyIdeaName", "categoryCount<Math.min(3,ideas.length)", "別候補の案名を書かない"
 ]) {
   if (!ai.includes(marker)) throw new Error(`AI adapter marker missing: ${marker}`);
 }
 const core = await readFile("src/decision-gate-core.js", "utf8");
-for (const marker of ["no_concern_reported", "isIrreversibleActionText", "reversiblePilotText", "requirement_check"]) {
+for (const marker of ["no_concern_reported", "isIrreversibleActionText", "reversiblePilotText", "requirement_check", "案別評価に別候補"]) {
   if (!core.includes(marker)) throw new Error(`Decision gate marker missing: ${marker}`);
 }
 const ui = await readFile("src/decision-gate-ui.js", "utf8");
@@ -62,11 +67,13 @@ Object.assign(context, {
   state:{build:{},input:{topic:"test"},decisionBoundary:{criteria:[{id:"D-001",text:"実現性"}]},results:{},resultMeta:{green:{updatedAt:"v1"}},candidateSelection:null},
 });
 new Script(core, {filename:"src/decision-gate-core.js"}).runInContext(context);
-const idea=(id,name,status,note="")=>({ideaId:id,name,description:`${name}の説明`,benefits:["便益"],challenges:["課題"],requirements:["条件確認","体制整備"],pilotMethod:`${name}を試行する`,constraintAssessments:[{constraintId:"C-002",status,note}],outOfScopeAssessments:[]});
-const unconfirmed=idea("G-099","未確認案","unknown","no_concern_reported");
-if (context.deriveInitialDisposition(unconfirmed) !== "conditional") throw new Error("Unreported concern was incorrectly treated as eligible");
+const idea=(id,name,status,note="",scope=[])=>({ideaId:id,name,description:`${name}の説明`,benefits:["便益"],challenges:["課題"],requirements:["条件確認","体制整備"],pilotMethod:`${name}を試行する`,constraintAssessments:[{constraintId:"C-002",status,note}],outOfScopeAssessments:scope});
+const unflaggedScope=idea("G-098","対象外未申告案","satisfies","",[{outOfScopeId:"O-001",status:"unknown",note:"no_concern_reported"}]);
+if (context.deriveInitialDisposition(unflaggedScope) !== "include") throw new Error("Unflagged out-of-scope item incorrectly made the candidate conditional");
+const explicitUnknown=idea("G-099","制約未確認案","unknown");
+if (context.deriveInitialDisposition(explicitUnknown) !== "conditional") throw new Error("Explicitly unknown constraint was not treated as conditional");
 context.state.results={
-  green:{ideas:[idea("G-001","段階導入","satisfies"),idea("G-002","住民インセンティブ制度","violates"),idea("G-003","資源化企業との連携","satisfies"),idea("G-004","自動選別","satisfies")]},
+  green:{ideas:[idea("G-001","段階導入","satisfies"),idea("G-002","住民インセンティブ制度","violates"),idea("G-003","資源化企業との連携","satisfies"),idea("G-004","自動選別方式","satisfies")]},
   black:{risks:[{name:"処理能力不足",cause:"余力不足",likelihood:3,impact:5,mitigations:["住民インセンティブ"]}]},
   yellow:{benefits:[{name:"資源化",description:"資源化率向上"}],strategicOpportunities:["景品を付与"]},
   white:{missingInformation:[{text:"処理能力",priority:"high"}]},
@@ -92,6 +99,9 @@ const artifacts = context.buildFinalBlueArtifacts(context.state,"normal");
 const selected="G-004", selectedAction=artifacts.actionCandidates.find(x=>x.ideaId===selected);
 const model={decisionType:"pilot",selectedIdeaId:selected,ideaEvaluations:artifacts.candidates.map(x=>({ideaId:x.ideaId,feasibility:4,recommendationScore:4,mainReason:"実現可能",mainRisk:"調整必要"})),keyReasons:["制約と整合","小規模試行可能"],selectedActionIds:[selectedAction.actionId]};
 if (context.Schema4Lite.validateFinalBlue(model,context.state).errors.length) throw new Error("Valid Schema 4 result failed validation");
+const badModel=structuredClone(model),first=badModel.ideaEvaluations[0],other=artifacts.candidates.find(x=>x.ideaId!==first.ideaId);
+first.mainReason=`${other.name}が適している`;
+if (!context.Schema4Lite.validateFinalBlue(badModel,context.state).errors.some(x=>x.includes("別候補"))) throw new Error("Cross-candidate evaluation text was not rejected");
 const assembled=context.Schema4Lite.assembleFinalDecision(model,context.state);
 if (assembled.selectedIdea.ideaId!==selected || !assembled.selectedActions.length) throw new Error("Deterministic final assembly failed");
 
