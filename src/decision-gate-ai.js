@@ -3,11 +3,11 @@
   "use strict";
   const S=window.Schema4Lite,L=S.legacy,legacySchemaFor=schemaFor,legacyCallAI=callAI;
 
-  ROLE_PROMPTS.green="緑の帽子として、二択を崩し、性質の異なる代替案を提示してください。指定された案IDを使用してください。制約は違反または不明のIDだけをconstraintConcernsへ、対象外事項は抵触・抵触可能性・不明のIDだけをoutOfScopeConcernsへ入れてください。問題がないと明示確認できないIDは、無理に満たすと判定せず配列へ入れないでください。評価理由の文章は不要です。pilotMethodには契約、発注、設備購入、本格導入、全面導入ではなく、ヒアリング、机上確認、試験搬入、小規模実証など中止・見直し可能な検証行動を書いてください。組合せ提案は表示用の発想メモ1件だけとし、説明は重複を避けて簡潔にしてください。";
+  ROLE_PROMPTS.green="緑の帽子として、議題に対する実施方式・政策オプションを提示してください。各案のname、category、descriptionは互いに異なる代替案とし、調査や検証の手順そのものを案にしないでください。案名を『ヒアリング』『机上確認』『試験搬入』『小規模実証』『情報収集』『条件確認』だけにしてはいけません。compactの3案は異なるcategoryを使い、例えば段階導入、地域限定、共同実施、外部委託、工程変更など構造の異なる方向を検討してください。指定された案IDを使用してください。各案について、指定された全制約IDをconstraintAssessmentsでsatisfies・violates・unknownのいずれかに評価してください。対象外事項は抵触・抵触可能性・不明のIDだけをoutOfScopeConcernsへ入れ、懸念がなければ省略してください。評価理由の文章は不要です。pilotMethodには、その政策案を確かめるためのヒアリング、机上確認、試験搬入、小規模実証など、中止・見直し可能な検証行動を書いてください。契約、発注、設備購入、本格導入、全面導入はpilotMethodに書かないでください。組合せ提案は表示用の発想メモ1件だけとし、説明は重複を避けて簡潔にしてください。";
 
-  function schemaForGreenConcerns(variant,ctx=state){
+  function schemaForGreenAlternatives(variant,ctx=state){
     const ideaCount=variant==="compact"?3:4,cIds=arr(ctx.deterministic?.constraints).map(x=>x.id).slice(0,4),oIds=arr(ctx.decisionBoundary?.outOfScope).map(x=>x.id).slice(0,4);
-    const constraintConcern=sObject({constraintId:sEnum(cIds.length?cIds:["C-NONE"]),status:sEnum(["violates","unknown"])});
+    const constraintAssessment=sObject({constraintId:sEnum(cIds.length?cIds:["C-NONE"]),status:sEnum(["satisfies","violates","unknown"])});
     const scopeConcern=sObject({outOfScopeId:sEnum(oIds.length?oIds:["O-NONE"]),status:sEnum(["possibly_conflicts","conflicts","unknown"])});
     const idea=sObject({
       ideaId:sEnum(Array.from({length:ideaCount},(_,i)=>`G-${String(i+1).padStart(3,"0")}`)),
@@ -15,32 +15,37 @@
       description:sString(variant==="compact"?260:360,1),distinctiveFeature:sString(variant==="compact"?180:260,1),
       benefits:sArray(sString(220,1),1,variant==="compact"?1:2),challenges:sArray(sString(220,1),1,variant==="compact"?1:2),
       requirements:sArray(sString(220,1),0,variant==="compact"?2:3),pilotMethod:sString(280,0),
-      constraintConcerns:sArray(constraintConcern,0,cIds.length),outOfScopeConcerns:sArray(scopeConcern,0,oIds.length)
+      constraintAssessments:sArray(constraintAssessment,cIds.length,cIds.length),outOfScopeConcerns:sArray(scopeConcern,0,oIds.length)
     });
     return sObject({ideas:sArray(idea,ideaCount,ideaCount),combinationSuggestion:sString(320,0)});
   }
-  schemaFor=function(id,variant="normal",ctx=state){return id==="green"?schemaForGreenConcerns(variant,ctx):legacySchemaFor(id,variant,ctx);};
+  schemaFor=function(id,variant="normal",ctx=state){return id==="green"?schemaForGreenAlternatives(variant,ctx):legacySchemaFor(id,variant,ctx);};
 
   function normalizeGreenCandidate(candidate,ctx=state){
     const cIds=arr(ctx.deterministic?.constraints).map(x=>x.id).slice(0,4),oIds=arr(ctx.decisionBoundary?.outOfScope).map(x=>x.id).slice(0,4);
     return {...candidate,ideas:arr(candidate?.ideas).map(idea=>{
-      if(arr(idea.constraintAssessments).length||arr(idea.outOfScopeAssessments).length)return idea;
-      const cMap=new Map(arr(idea.constraintConcerns).map(x=>[x.constraintId,x.status])),oMap=new Map(arr(idea.outOfScopeConcerns).map(x=>[x.outOfScopeId,x.status]));
+      const suppliedConstraints=arr(idea.constraintAssessments),legacyConstraintMap=new Map(arr(idea.constraintConcerns).map(x=>[x.constraintId,x.status]));
+      const constraintMap=new Map(suppliedConstraints.map(x=>[x.constraintId,x.status]));
+      const scopeMap=new Map(arr(idea.outOfScopeConcerns).map(x=>[x.outOfScopeId,x.status]));
       const {constraintConcerns,outOfScopeConcerns,...rest}=idea;
       return {...rest,
-        constraintAssessments:cIds.map(id=>cMap.has(id)?{constraintId:id,status:cMap.get(id),note:""}:{constraintId:id,status:"unknown",note:"no_concern_reported"}),
-        outOfScopeAssessments:oIds.map(id=>oMap.has(id)?{outOfScopeId:id,status:oMap.get(id),note:""}:{outOfScopeId:id,status:"unknown",note:"no_concern_reported"})
+        constraintAssessments:cIds.map(id=>({constraintId:id,status:constraintMap.get(id)||legacyConstraintMap.get(id)||"unknown",note:""})),
+        outOfScopeAssessments:oIds.map(id=>scopeMap.has(id)?{outOfScopeId:id,status:scopeMap.get(id),note:""}:{outOfScopeId:id,status:"unknown",note:"no_concern_reported"})
       };
     })};
   }
   function greenCandidateForSchema(candidate){
     return {...candidate,ideas:arr(candidate?.ideas).map(idea=>{
-      const {constraintAssessments,outOfScopeAssessments,...rest}=idea;
+      const {outOfScopeAssessments,constraintConcerns,...rest}=idea;
       return {...rest,
-        constraintConcerns:arr(constraintAssessments).filter(x=>x.note!=="no_concern_reported"&&["violates","unknown"].includes(x.status)).map(x=>({constraintId:x.constraintId,status:x.status})),
+        constraintAssessments:arr(idea.constraintAssessments).map(x=>({constraintId:x.constraintId,status:x.status})),
         outOfScopeConcerns:arr(outOfScopeAssessments).filter(x=>x.note!=="no_concern_reported"&&["possibly_conflicts","conflicts","unknown"].includes(x.status)).map(x=>({outOfScopeId:x.outOfScopeId,status:x.status}))
       };
     })};
+  }
+  function isValidationOnlyIdeaName(name){
+    const n=normalizeText(name);
+    return ["ヒアリング","机上確認","試験搬入","小規模実証","実証実験","事前調査","現地調査","情報収集","条件確認"].includes(n);
   }
 
   conclusionSchemaContext=function(ctx=state){return {...ctx,finalBlueArtifacts:S.buildFinalBlueArtifacts(ctx,"normal")};};
@@ -48,14 +53,20 @@
   buildPrompt=function(id,opt={},attempt=1,errors=[]){
     if(id!=="blue_closing")return L.buildPrompt(id,opt,attempt,errors);
     const compact=Boolean(opt.compact),retry=attempt>1?`\n前回の不備だけを修正してください: ${errors.slice(0,3).map(x=>safeText(x,120)).join(" / ")}`:"";
-    return `役割:\n${ROLE_PROMPTS.blue_closing}\n\n回答方針:\n候補案を漏れなく1回ずつ評価し、候補から1案を選択してください。理由は各1文で簡潔にしてください。アクションは入力のactionIdだけを選択してください。${compact?" 出力をさらに簡潔にしてください。":""}${retry}\n\n入力情報:\n${JSON.stringify(S.buildFinalBlueArtifacts(state,compact?"compact":"normal"))}`;
+    return `役割:\n${ROLE_PROMPTS.blue_closing}\n\n回答方針:\n候補案を漏れなく1回ずつ評価し、候補から1案を選択してください。各ideaEvaluationsのmainReasonとmainRiskは、そのideaIdの案だけを説明し、別候補の案名を書かないでください。理由は各1文で簡潔にしてください。アクションは入力のactionIdだけを選択してください。${compact?" 出力をさらに簡潔にしてください。":""}${retry}\n\n入力情報:\n${JSON.stringify(S.buildFinalBlueArtifacts(state,compact?"compact":"normal"))}`;
   };
 
   semanticValidate=function(id,data,ctx=state,variant="normal"){
     if(id==="green"){
-      const normalized=normalizeGreenCandidate(data,ctx),result=L.semanticValidate(id,normalized,ctx,variant);
-      for(const idea of arr(normalized.ideas))if(S.isIrreversibleActionText(idea.pilotMethod))result.warnings.push(createWarning("GREEN_PILOT_NOT_REVERSIBLE","review_required",`${idea.name}: pilotMethodが契約・本格導入など不可逆な行動です。最終青では検証行動へ置き換えます`,id,[idea.ideaId]));
-      result.semanticChecks=[...(result.semanticChecks||[]),`緑の標準案数: ${variant==="compact"?3:4}`,"未申告の制約・対象外評価は適合ではなく未確認として保存"];
+      const normalized=normalizeGreenCandidate(data,ctx),result=L.semanticValidate(id,normalized,ctx,variant),ideas=arr(normalized.ideas);
+      result.warnings=arr(result.warnings).filter(x=>x.code!=="GREEN_LOW_DIVERSITY");
+      const categoryCount=new Set(ideas.map(x=>x.category)).size;
+      if(categoryCount<Math.min(3,ideas.length))result.errors.push("緑の代替案は少なくとも3種類の異なるcategoryで提示してください");
+      for(const idea of ideas){
+        if(isValidationOnlyIdeaName(idea.name))result.errors.push(`${idea.ideaId}: 案名「${idea.name}」は検証手順であり、政策・実施方式の代替案ではありません`);
+        if(S.isIrreversibleActionText(idea.pilotMethod))result.warnings.push(createWarning("GREEN_PILOT_NOT_REVERSIBLE","review_required",`${idea.name}: pilotMethodが契約・本格導入など不可逆な行動です。最終青では検証行動へ置き換えます`,id,[idea.ideaId]));
+      }
+      result.semanticChecks=[...(result.semanticChecks||[]),`緑の標準案数: ${variant==="compact"?3:4}`,`代替案category数: ${categoryCount}`,"制約は全件評価、対象外事項はconcern-onlyで評価","案本体と検証方法を分離"];
       return result;
     }
     if(id!=="blue_closing")return L.semanticValidate(id,data,ctx,variant);
@@ -108,5 +119,5 @@
     return {decisionType:selected.disposition==="conditional"?"conditional":"pilot",selectedIdeaId:selected.ideaId,ideaEvaluations:a.candidates.map((x,i)=>({ideaId:x.ideaId,feasibility:Math.max(2,4-i),recommendationScore:i===0?5:Math.max(2,4-i),mainReason:x.benefits[0]||"主要な便益を確認できる。",mainRisk:x.challenges[0]||"実施条件の確認が必要。"})),keyReasons:["主要な制約との整合を確認しながら着手できる。","小規模な着手で不確実性を下げられる。"],selectedActionIds:actions.map(x=>x.actionId)};
   };
 
-  Object.assign(S,{normalizeGreenCandidate,greenCandidateForSchema});
+  Object.assign(S,{normalizeGreenCandidate,greenCandidateForSchema,isValidationOnlyIdeaName});
 })();
