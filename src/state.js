@@ -88,8 +88,9 @@ function calculateInformationCompleteness(){
   for(const x of arr(white?.missingInformation))score-=x.priority==="high"?10:x.priority==="medium"?5:2;
   for(const o of arr(blue?.options))if(o.feasibility===0||o.recommendationScore===0)score-=5;
   for(const idea of arr(state.results.green?.ideas)){
-    score-=arr(idea.constraintAssessments).filter(x=>x.status==="unknown").length*3;
-    score-=arr(idea.outOfScopeAssessments).filter(x=>x.status==="unknown").length*3;
+    score-=arr(idea.constraintAssessments).filter(x=>x.status==="unknown"&&x.note!=="no_concern_reported").length*3;
+    score-=arr(idea.outOfScopeAssessments).filter(x=>x.status==="unknown"&&x.note!=="no_concern_reported").length*3;
+    score-=arr(idea.outOfScopeAssessments).filter(x=>x.status==="possibly_conflicts").length*2;
   }
   const importantUnverified=state.deterministic.inputClaims.filter(x=>x.verificationStatus==="unverified").length;score-=importantUnverified*3;
   return Math.max(0,Math.min(100,score));
